@@ -1,0 +1,5 @@
+{
+  "name": "DayFlow",
+  "description": "A minimalist daily task manager for focused productivity with real-time sync and PWA support.",
+  "requestFramePermissions": []
+}

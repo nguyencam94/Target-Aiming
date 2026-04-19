@@ -1,0 +1,23 @@
+{
+  "name": "DayFlow",
+  "short_name": "DayFlow",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#10b981",
+  "description": "Daily Task Manager",
+  "icons": [
+    {
+      "src": "https://www.gstatic.com/images/branding/product/2x/keep_2020q4_48dp.png",
+      "sizes": "96x96",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/906/906334.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

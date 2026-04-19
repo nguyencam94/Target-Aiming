@@ -1,0 +1,43 @@
+{
+  "entities": {
+    "Goal": {
+      "title": "Goal",
+      "description": "A strategic daily goal (one of the Big 3)",
+      "type": "object",
+      "properties": {
+        "text": { "type": "string" },
+        "deadline": { "type": "string" },
+        "completed": { "type": "boolean" },
+        "userId": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["text", "userId", "createdAt"]
+    },
+    "SubTask": {
+      "title": "SubTask",
+      "description": "A smaller task belonging to a goal",
+      "type": "object",
+      "properties": {
+        "goalId": { "type": "string" },
+        "text": { "type": "string" },
+        "deadline": { "type": "string" },
+        "workloadValue": { "type": "number" },
+        "workloadUnit": { "type": "string" },
+        "completed": { "type": "boolean" },
+        "userId": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["goalId", "text", "userId", "createdAt"]
+    }
+  },
+  "firestore": {
+    "goals/{goalId}": {
+      "schema": "Goal",
+      "description": "Collection of strategic goals"
+    },
+    "goals/{goalId}/subtasks/{subtaskId}": {
+      "schema": "SubTask",
+      "description": "Subtasks for a specific goal"
+    }
+  }
+}
