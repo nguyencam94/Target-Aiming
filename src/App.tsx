@@ -5,7 +5,8 @@ import {
   Calendar as CalendarIcon, ChevronDown, ChevronUp, 
   Target, Layers, Ruler, AlertCircle, Clock,
   LogIn, LogOut, User as UserIcon, Edit3,
-  Percent, BarChart2, Home, List as ListIcon
+  Percent, BarChart2, Home, List as ListIcon,
+  ChevronLeft, ChevronRight, Calendar
 } from "lucide-react";
 import { 
   ResponsiveContainer, PieChart, Pie, Cell, 
@@ -37,11 +38,12 @@ interface Goal {
   weight: number;
   completed: boolean;
   createdAt: any;
+  date: string; // YYYY-MM-DD
   userId: string;
   subtasks: SubTask[];
 }
 
-type ViewMode = 'daily' | 'stats';
+type ViewMode = 'daily' | 'stats' | 'calendar';
 type StatsPeriod = 'day' | 'week' | 'month' | 'year';
 
 export default function App() {
@@ -54,6 +56,8 @@ export default function App() {
   const [expandedGoalId, setExpandedGoalId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>('daily');
   const [statsPeriod, setStatsPeriod] = useState<StatsPeriod>('day');
+  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [calendarMonth, setCalendarMonth] = useState(new Date());
   
   // Subtask form state
   const [addingSubtaskTo, setAddingSubtaskTo] = useState<string | null>(null);
@@ -67,6 +71,7 @@ export default function App() {
   const [editGoalText, setEditGoalText] = useState("");
   const [editGoalDeadline, setEditGoalDeadline] = useState("");
   const [editGoalWeight, setEditGoalWeight] = useState("");
+  const [editGoalDate, setEditGoalDate] = useState("");
 
   const [editingSubtaskId, setEditingSubtaskId] = useState<string | null>(null);
   const [editSubtaskText, setEditSubtaskText] = useState("");
@@ -76,6 +81,8 @@ export default function App() {
   const [editSubtaskWeight, setEditSubtaskWeight] = useState("");
 
   const [isIframe, setIsIframe] = useState(false);
+  const [showWeightWarning, setShowWeightWarning] = useState(false);
+  const [warningGoalId, setWarningGoalId] = useState<string | null>(null);
 
   useEffect(() => {
     setIsIframe(window.self !== window.top);
@@ -132,6 +139,16 @@ export default function App() {
   const login = () => signInWithPopup(auth, googleProvider);
   const logout = () => signOut(auth);
 
+  const isGoalInDate = (g: Goal, dateStr: string) => {
+    if (g.date === dateStr) return true;
+    if (!g.date && g.createdAt) {
+      const createdAtDate = g.createdAt instanceof Timestamp ? g.createdAt.toDate() : 
+                        (typeof g.createdAt === 'string' ? new Date(g.createdAt) : new Date());
+      return createdAtDate.toISOString().split('T')[0] === dateStr;
+    }
+    return false;
+  };
+
   const getFilteredGoals = () => {
     const now = new Date();
     const start = new Date(now);
@@ -152,8 +169,14 @@ export default function App() {
     }
 
     return goals.filter(g => {
-      const gDate = g.createdAt instanceof Timestamp ? g.createdAt.toDate() : 
-                    (typeof g.createdAt === 'string' ? new Date(g.createdAt) : new Date());
+      let gDateStr = g.date;
+      if (!gDateStr && g.createdAt) {
+        const d = g.createdAt instanceof Timestamp ? g.createdAt.toDate() : 
+                  (typeof g.createdAt === 'string' ? new Date(g.createdAt) : new Date());
+        gDateStr = d.toISOString().split('T')[0];
+      }
+      const gDate = new Date(gDateStr || new Date());
+      gDate.setHours(0, 0, 0, 0);
       return gDate >= start;
     });
   };
@@ -162,16 +185,10 @@ export default function App() {
     e.preventDefault();
     if (!newGoalText.trim() || !user) return;
 
-    // RULE OF 3 CHECK: Only count goals created TODAY
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
-    
-    const todayGoals = goals.filter(g => {
-      const gDate = g.createdAt instanceof Timestamp ? g.createdAt.toDate() : new Date();
-      return gDate >= startOfDay;
-    });
+    // RULE OF 3 CHECK: Only count goals for the selected date
+    const dateGoals = goals.filter(g => isGoalInDate(g, selectedDate));
 
-    if (todayGoals.length >= 3) {
+    if (dateGoals.length >= 3) {
       alert("Bạn chỉ nên đặt tối đa 3 mục tiêu lớn mỗi ngày để đạt hiệu quả cao nhất.");
       return;
     }
@@ -183,6 +200,7 @@ export default function App() {
         weight: parseFloat(newGoalWeight) || 33.3,
         completed: false,
         userId: user.uid,
+        date: selectedDate,
         createdAt: serverTimestamp()
       });
       
@@ -207,6 +225,15 @@ export default function App() {
     setEditGoalText(goal.text);
     setEditGoalDeadline(goal.deadline || "");
     setEditGoalWeight(goal.weight?.toString() || "");
+    
+    // Fallback to createdAt date if date field is missing
+    let gDate = goal.date;
+    if (!gDate && goal.createdAt) {
+      const d = goal.createdAt instanceof Timestamp ? goal.createdAt.toDate() : 
+                (typeof goal.createdAt === 'string' ? new Date(goal.createdAt) : new Date());
+      gDate = d.toISOString().split('T')[0];
+    }
+    setEditGoalDate(gDate || selectedDate);
   };
 
   const saveEditGoal = async (id: string) => {
@@ -215,7 +242,8 @@ export default function App() {
       await updateDoc(doc(db, "goals", id), {
         text: editGoalText,
         deadline: editGoalDeadline || null,
-        weight: parseFloat(editGoalWeight) || 0
+        weight: parseFloat(editGoalWeight) || 0,
+        date: editGoalDate
       });
       setEditingGoalId(null);
     } catch (err) {
@@ -232,15 +260,21 @@ export default function App() {
     }
   };
 
-  const addSubtask = async (goalId: string) => {
+  const addSubtask = async (goalId: string, skipWarning = false) => {
     if (!subtaskText.trim() || !user) return;
+
+    if (!skipWarning && (subtaskWeight === "0" || subtaskWeight === "")) {
+      setWarningGoalId(goalId);
+      setShowWeightWarning(true);
+      return;
+    }
 
     try {
       // Calculate remaining weight for subtasks if user hasn't specified
       const currentSubtasks = goals.find(g => g.id === goalId)?.subtasks || [];
       const totalWeightUsed = currentSubtasks.reduce((sum, s) => sum + (s.weight || 0), 0);
       const defaultWeight = Math.max(0, 100 - totalWeightUsed);
-      const finalWeight = subtaskWeight === "0" ? defaultWeight : parseFloat(subtaskWeight);
+      const finalWeight = (subtaskWeight === "0" || subtaskWeight === "") ? defaultWeight : parseFloat(subtaskWeight);
 
       await addDoc(collection(db, `goals/${goalId}/subtasks`), {
         goalId,
@@ -315,9 +349,10 @@ export default function App() {
   };
 
   const calculateOverallProgress = () => {
-    if (goals.length === 0) return 0;
-    const totalGoalWeights = goals.reduce((sum, g) => sum + (g.weight || 1), 0);
-    const weightedProgress = goals.reduce((sum, g) => {
+    const dailyGoals = goals.filter(g => isGoalInDate(g, selectedDate));
+    if (dailyGoals.length === 0) return 0;
+    const totalGoalWeights = dailyGoals.reduce((sum, g) => sum + (g.weight || 1), 0);
+    const weightedProgress = dailyGoals.reduce((sum, g) => {
       const goalProgress = calculateGoalProgress(g);
       return sum + (goalProgress * (g.weight || 1) / 100);
     }, 0);
@@ -325,6 +360,8 @@ export default function App() {
   };
 
   const overallProgress = calculateOverallProgress();
+
+  const currentDailyGoals = goals.filter(g => isGoalInDate(g, selectedDate));
 
   if (!user) {
     return (
@@ -356,49 +393,57 @@ export default function App() {
         <header className="mb-8 md:mb-12">
           <div className="flex items-center justify-between mb-6 md:mb-8">
             <div className="flex items-center gap-3 md:gap-4">
-              <div className="w-10 h-10 md:w-12 md:h-12 bg-indigo-600 rounded-xl md:rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-100">
-                <Target className="text-white" size={20} />
+              <div className="w-8 h-8 md:w-12 md:h-12 bg-indigo-600 rounded-xl md:rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-100">
+                <Target className="text-white w-4 h-4 md:w-6 md:h-6" />
               </div>
-              <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight text-slate-900">DayFlow</h1>
+              <h1 className="text-xl md:text-3xl font-extrabold tracking-tight text-slate-900">DayFlow</h1>
             </div>
             <div className="flex items-center gap-2 md:gap-3">
               <button 
                 onClick={() => setViewMode('daily')}
-                className={`p-2 rounded-xl transition-all ${viewMode === 'daily' ? "bg-indigo-600 text-white shadow-lg" : "bg-white text-slate-400 border border-slate-100"}`}
+                className={`p-1.5 md:p-2 rounded-xl transition-all ${viewMode === 'daily' ? "bg-indigo-600 text-white shadow-lg" : "bg-white text-slate-400 border border-slate-100"}`}
               >
-                <Home size={18} />
+                <Home className="w-4 h-4 md:w-[18px] md:h-[18px]" />
               </button>
               <button 
                 onClick={() => setViewMode('stats')}
-                className={`p-2 rounded-xl transition-all ${viewMode === 'stats' ? "bg-indigo-600 text-white shadow-lg" : "bg-white text-slate-400 border border-slate-100"}`}
+                className={`p-1.5 md:p-2 rounded-xl transition-all ${viewMode === 'stats' ? "bg-indigo-600 text-white shadow-lg" : "bg-white text-slate-400 border border-slate-100"}`}
               >
-                <BarChart2 size={18} />
+                <BarChart2 className="w-4 h-4 md:w-[18px] md:h-[18px]" />
+              </button>
+              <button 
+                onClick={() => setViewMode('calendar')}
+                className={`p-1.5 md:p-2 rounded-xl transition-all ${viewMode === 'calendar' ? "bg-indigo-600 text-white shadow-lg" : "bg-white text-slate-400 border border-slate-100"}`}
+              >
+                <Calendar className="w-4 h-4 md:w-[18px] md:h-[18px]" />
               </button>
               <div className="hidden sm:flex flex-col items-end mx-2">
-                <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Hôm nay</span>
-                <span className="text-sm font-bold text-slate-700">{new Date().toLocaleDateString('vi-VN', { weekday: 'long', day: 'numeric', month: 'long' })}</span>
+                <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+                  {selectedDate === new Date().toISOString().split('T')[0] ? "Hôm nay" : "Đang xem"}
+                </span>
+                <span className="text-sm font-bold text-slate-700">{new Date(selectedDate).toLocaleDateString('vi-VN', { weekday: 'long', day: 'numeric', month: 'long' })}</span>
               </div>
               <button 
                 onClick={logout}
                 className="p-2.5 md:p-3 bg-white border border-slate-200 rounded-xl md:rounded-2xl text-slate-400 hover:text-red-500 hover:border-red-100 transition-all shadow-sm"
                 title="Đăng xuất"
               >
-                <LogOut size={18} md:size={20} />
+                <LogOut className="w-[18px] h-[18px] md:w-5 md:h-5" />
               </button>
             </div>
           </div>
 
           {/* Progress Card */}
-          <div className="bg-indigo-600 rounded-[2rem] md:rounded-[2.5rem] p-6 md:p-8 shadow-2xl shadow-indigo-100 text-white relative overflow-hidden">
+          <div className="bg-indigo-600 rounded-[1.5rem] md:rounded-[2.5rem] p-5 md:p-8 shadow-2xl shadow-indigo-100 text-white relative overflow-hidden">
             <div className="relative z-10">
-              <div className="flex justify-between items-center mb-4 md:mb-6">
+              <div className="flex justify-between items-center mb-3 md:mb-6">
                 <div>
-                  <p className="text-indigo-100 text-[10px] md:text-xs font-black uppercase tracking-[0.3em] mb-1 md:mb-2 opacity-80">Hiệu suất tổng thể</p>
-                  <p className="text-3xl md:text-4xl font-black">{Math.round(overallProgress)}% <span className="text-indigo-200 text-sm md:text-base font-bold">Hoàn thành</span></p>
+                  <p className="text-indigo-100 text-[9px] md:text-xs font-black uppercase tracking-[0.3em] mb-1 md:mb-2 opacity-80">Hiệu suất tổng thể</p>
+                  <p className="text-2xl md:text-4xl font-black">{Math.round(overallProgress)}% <span className="text-indigo-200 text-xs md:text-base font-bold">Hoàn thành</span></p>
                 </div>
-                <div className="text-4xl md:text-5xl font-black opacity-30">#3</div>
+                <div className="text-3xl md:text-5xl font-black opacity-30">#3</div>
               </div>
-              <div className="h-3 md:h-4 bg-indigo-900/20 rounded-full overflow-hidden backdrop-blur-md p-0.5 md:p-1">
+              <div className="h-2 md:h-4 bg-indigo-900/20 rounded-full overflow-hidden backdrop-blur-md p-0.5 md:p-1">
                 <motion.div 
                    className="h-full bg-white rounded-full shadow-[0_0_20px_rgba(255,255,255,0.6)]"
                    initial={{ width: 0 }}
@@ -415,16 +460,46 @@ export default function App() {
         {/* Conditional Content based on viewMode */}
         {viewMode === 'daily' ? (
           <div>
+            {/* Date Navigation for Daily View */}
+            <div className="flex items-center justify-between mb-8 bg-white p-3 rounded-2xl border border-slate-100 shadow-sm">
+              <button 
+                onClick={() => {
+                  const d = new Date(selectedDate);
+                  d.setDate(d.getDate() - 1);
+                  setSelectedDate(d.toISOString().split('T')[0]);
+                }}
+                className="p-2 hover:bg-slate-50 rounded-xl text-slate-400 hover:text-indigo-600 transition-all"
+              >
+                <ChevronLeft size={20} />
+              </button>
+              <div className="flex items-center gap-3">
+                <CalendarIcon size={18} className="text-indigo-500" />
+                <span className="font-black text-slate-700 tracking-tight">
+                  {new Date(selectedDate).toLocaleDateString('vi-VN', { day: 'numeric', month: 'long', year: 'numeric' })}
+                </span>
+              </div>
+              <button 
+                onClick={() => {
+                  const d = new Date(selectedDate);
+                  d.setDate(d.getDate() + 1);
+                  setSelectedDate(d.toISOString().split('T')[0]);
+                }}
+                className="p-2 hover:bg-slate-50 rounded-xl text-slate-400 hover:text-indigo-600 transition-all"
+              >
+                <ChevronRight size={20} />
+              </button>
+            </div>
+
             {/* Add Goal Section */}
             {loading ? (
            <div className="py-12 md:py-20 flex flex-col items-center justify-center text-slate-300 gap-4">
               <div className="w-8 h-8 border-4 border-indigo-100 border-t-indigo-600 rounded-full animate-spin"></div>
               <p className="text-xs md:text-sm font-bold uppercase tracking-widest text-center">Đang tải dữ liệu...</p>
            </div>
-        ) : goals.length < 3 ? (
+        ) : currentDailyGoals.length < 3 ? (
           <form onSubmit={addGoal} className="bg-white p-6 md:p-8 rounded-[2rem] md:rounded-[2.5rem] shadow-xl shadow-slate-200/50 border border-slate-100 mb-8 md:mb-12 transform hover:scale-[1.01] transition-transform duration-500">
             <h3 className="text-[10px] md:text-xs font-black text-slate-400 uppercase tracking-[0.25em] mb-4 md:mb-6 flex items-center gap-2 md:gap-3">
-              <Plus className="text-indigo-600" size={16} md:size={18} strokeWidth={3} /> Thiết lập Big 3
+              <Plus className="text-indigo-600 w-4 h-4 md:w-[18px] md:h-[18px]" strokeWidth={3} /> Thiết lập Big 3
             </h3>
             <div className="space-y-4 md:space-y-6">
               <input
@@ -436,7 +511,7 @@ export default function App() {
               />
               <div className="flex flex-wrap gap-3 md:gap-4 items-center">
                 <div className="flex items-center gap-2 md:gap-3 bg-slate-50 px-4 py-2 md:px-5 md:py-3 rounded-xl md:rounded-2xl text-slate-500 text-xs md:text-sm font-bold border border-slate-100">
-                  <Percent size={14} md:size={16} className="text-indigo-500" />
+                  <Percent className="text-indigo-500 w-3.5 h-3.5 md:w-4 md:h-4" />
                   <input 
                     type="number" 
                     value={newGoalWeight}
@@ -458,7 +533,7 @@ export default function App() {
           </form>
         ) : (
           <div className="bg-indigo-50/50 border-2 border-indigo-100/50 p-5 md:p-6 rounded-[1.5rem] md:rounded-[2rem] mb-8 md:mb-12 flex items-center gap-4 text-indigo-900">
-            <Target size={20} md:size={24} className="text-indigo-600 shrink-0" />
+            <Target className="text-indigo-600 shrink-0 w-5 h-5 md:w-6 md:h-6" />
             <p className="text-xs md:text-sm font-bold leading-relaxed tracking-tight underline decoration-indigo-200 underline-offset-4">"Sự tập trung là lời từ chối với hàng nghìn ý tưởng tốt khác." - Hãy hoàn thành 3 mục tiêu này!</p>
           </div>
         )}
@@ -466,7 +541,7 @@ export default function App() {
         {/* Goals List */}
         <div className="space-y-6 md:space-y-8">
           <AnimatePresence mode="popLayout">
-            {goals.map((goal) => (
+            {currentDailyGoals.map((goal) => (
               <motion.div
                 key={goal.id}
                 layout
@@ -478,14 +553,47 @@ export default function App() {
               >
                 <div className="p-6 md:p-8">
                   <div className="flex items-start gap-4 md:gap-6">
-                    <button
-                      onClick={() => toggleGoal(goal.id, goal.completed)}
-                      className={`mt-1 flex-shrink-0 transition-all duration-500 transform active:scale-75 ${
-                        goal.completed ? "text-emerald-500" : "text-slate-100 hover:text-indigo-400"
-                      }`}
-                    >
-                      {goal.completed ? <CheckCircle2 className="w-8 h-8 md:w-10 md:h-10" strokeWidth={2.5} /> : <Circle className="w-8 h-8 md:w-10 md:h-10" strokeWidth={2} />}
-                    </button>
+                    <div className="mt-1 flex-shrink-0 relative group cursor-pointer" onClick={() => toggleGoal(goal.id, goal.completed)}>
+                      <div className="w-12 h-12 md:w-16 md:h-16 flex items-center justify-center relative">
+                        <svg className="w-full h-full transform -rotate-90">
+                          <circle
+                            cx="50%"
+                            cy="50%"
+                            r="40%"
+                            className="stroke-slate-100 fill-none"
+                            strokeWidth="8%"
+                          />
+                          <motion.circle
+                            cx="50%"
+                            cy="50%"
+                            r="40%"
+                            className={`${goal.completed ? "stroke-emerald-500" : "stroke-indigo-600"} fill-none`}
+                            strokeWidth="8%"
+                            strokeLinecap="round"
+                            initial={{ pathLength: 0 }}
+                            animate={{ pathLength: calculateGoalProgress(goal) / 100 }}
+                            transition={{ duration: 1, ease: "easeOut" }}
+                          />
+                        </svg>
+                        <div className="absolute inset-0 flex items-center justify-center">
+                          <span className={`text-[9px] md:text-xs font-black ${goal.completed ? "text-emerald-600" : "text-indigo-600"}`}>
+                            {Math.round(calculateGoalProgress(goal))}%
+                          </span>
+                        </div>
+                      </div>
+                      
+                      {/* Interactive checkmark on hover when incomplete */}
+                      {!goal.completed && calculateGoalProgress(goal) < 100 && (
+                        <div className="absolute inset-0 opacity-0 group-hover:opacity-100 bg-white/80 rounded-full flex items-center justify-center transition-opacity border-2 border-indigo-100">
+                          <Check className="text-indigo-600" size={14} />
+                        </div>
+                      )}
+                      {goal.completed && (
+                        <div className="absolute -top-1 -right-1 bg-emerald-500 text-white p-1 rounded-full shadow-lg border-2 border-white">
+                          <Check size={8} strokeWidth={4} />
+                        </div>
+                      )}
+                    </div>
                     
                     <div className="flex-grow">
                       <div className="flex justify-between items-start">
@@ -499,6 +607,15 @@ export default function App() {
                               autoFocus
                             />
                             <div className="flex flex-wrap gap-2">
+                              <div className="flex items-center gap-2 bg-slate-50 px-3 py-1.5 rounded-xl text-slate-500 text-[10px] md:text-xs font-bold border border-slate-100 w-fit">
+                                <CalendarIcon size={12} className="text-indigo-500" />
+                                <input 
+                                  type="date" 
+                                  value={editGoalDate}
+                                  onChange={(e) => setEditGoalDate(e.target.value)}
+                                  className="bg-transparent border-none focus:ring-0 p-0 text-[10px] md:text-xs font-bold"
+                                />
+                              </div>
                               <div className="flex items-center gap-2 bg-slate-50 px-3 py-1.5 rounded-xl text-slate-500 text-[10px] md:text-xs font-bold border border-slate-100 w-fit">
                                 <Clock size={12} className="text-indigo-500" />
                                 <input 
@@ -526,20 +643,20 @@ export default function App() {
                           </div>
                         ) : (
                           <>
-                            <h2 className={`text-lg md:text-2xl font-black tracking-tight leading-tight transition-all duration-500 ${
+                            <h2 className={`text-base md:text-2xl font-black tracking-tight leading-tight transition-all duration-500 ${
                               goal.completed ? "text-slate-300 line-through font-medium" : "text-slate-900"
                             }`}>
                               {goal.text}
                             </h2>
-                            <div className="flex gap-1.5 md:gap-2 ml-2">
-                              <button onClick={() => startEditingGoal(goal)} className="p-2 bg-indigo-50 text-indigo-600 border border-indigo-100 rounded-lg md:rounded-xl transition-all shadow-sm">
-                                <Edit3 size={16} md:size={20} />
+                            <div className="flex gap-1 md:gap-2 ml-2">
+                              <button onClick={() => startEditingGoal(goal)} className="p-1.5 md:p-2 bg-indigo-50 text-indigo-600 border border-indigo-100 rounded-lg md:rounded-xl transition-all shadow-sm">
+                                <Edit3 className="w-3.5 h-3.5 md:w-5 md:h-5" />
                               </button>
-                              <button onClick={() => setExpandedGoalId(expandedGoalId === goal.id ? null : goal.id)} className={`p-2 rounded-lg md:rounded-xl border transition-all ${expandedGoalId === goal.id ? "bg-indigo-600 text-white border-indigo-600 shadow-lg shadow-indigo-200" : "bg-slate-50 text-slate-400 border-slate-100 hover:bg-slate-100"}`}>
-                                {expandedGoalId === goal.id ? <ChevronUp size={16} md:size={20} /> : <ChevronDown size={16} md:size={20} />}
+                              <button onClick={() => setExpandedGoalId(expandedGoalId === goal.id ? null : goal.id)} className={`p-1.5 md:p-2 rounded-lg md:rounded-xl border transition-all ${expandedGoalId === goal.id ? "bg-indigo-600 text-white border-indigo-600 shadow-lg shadow-indigo-200" : "bg-slate-50 text-slate-400 border-slate-100 hover:bg-slate-100"}`}>
+                                {expandedGoalId === goal.id ? <ChevronUp className="w-3.5 h-3.5 md:w-5 md:h-5" /> : <ChevronDown className="w-3.5 h-3.5 md:w-5 md:h-5" />}
                               </button>
-                              <button onClick={() => deleteGoal(goal.id)} className="p-2 bg-red-50 text-red-500 border border-red-100 rounded-lg md:rounded-xl transition-all shadow-sm">
-                                <Trash2 size={16} md:size={20} />
+                              <button onClick={() => deleteGoal(goal.id)} className="p-1.5 md:p-2 bg-red-50 text-red-500 border border-red-100 rounded-lg md:rounded-xl transition-all shadow-sm">
+                                <Trash2 className="w-3.5 h-3.5 md:w-5 md:h-5" />
                               </button>
                             </div>
                           </>
@@ -578,7 +695,7 @@ export default function App() {
                     >
                       <div className="flex items-center justify-between mb-6 md:mb-8">
                         <h3 className="text-[10px] md:text-xs font-black text-slate-400 uppercase tracking-[0.3em] flex items-center gap-2">
-                          <Layers className="text-indigo-600" size={14} md:size={16} /> Chi tiết hạng mục
+                          <Layers className="text-indigo-600 w-3.5 h-3.5 md:w-4 md:h-4" /> Chi tiết hạng mục
                         </h3>
                         <button 
                           onClick={() => setAddingSubtaskTo(addingSubtaskTo === goal.id ? null : goal.id)}
@@ -599,17 +716,17 @@ export default function App() {
                           />
                           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 md:gap-4">
                             <div className="flex items-center gap-3 bg-slate-50 px-4 py-2 md:px-5 md:py-3 rounded-xl md:rounded-2xl text-slate-700 border-2 border-transparent focus-within:border-indigo-100 transition-all">
-                              <Ruler className="text-indigo-500" size={16} md:size={18} />
+                              <Ruler className="text-indigo-500 w-4 h-4 md:w-[18px] md:h-[18px]" />
                               <input type="number" placeholder="Khối lượng" value={subtaskWorkload} onChange={(e) => setSubtaskWorkload(e.target.value)} className="bg-transparent border-none w-full focus:ring-0 p-0 font-bold text-sm md:text-base"/>
                             </div>
                             <input type="text" placeholder="Đơn vị" value={subtaskUnit} onChange={(e) => setSubtaskUnit(e.target.value)} className="bg-slate-50 border-none rounded-xl md:rounded-2xl px-4 py-2.5 md:px-5 md:py-3 font-bold text-slate-700 focus:ring-4 focus:ring-indigo-100 text-sm md:text-base"/>
                             <div className="flex items-center gap-3 bg-slate-50 px-4 py-2 md:px-5 md:py-3 rounded-xl md:rounded-2xl text-slate-700 border-2 border-transparent focus-within:border-indigo-100 transition-all">
-                              <Percent className="text-indigo-500" size={16} md:size={18} />
+                              <Percent className="text-indigo-500 w-4 h-4 md:w-[18px] md:h-[18px]" />
                               <input type="number" placeholder="Tỷ trọng %" value={subtaskWeight} onChange={(e) => setSubtaskWeight(e.target.value)} className="bg-transparent border-none w-full focus:ring-0 p-0 font-bold text-sm md:text-base"/>
                             </div>
                           </div>
                           <div className="flex items-center gap-3 bg-slate-50 px-4 py-2.5 md:px-5 md:py-3 rounded-xl md:rounded-2xl text-slate-700 border-2 border-transparent focus-within:border-indigo-100 transition-all">
-                            <Clock className="text-indigo-500" size={16} md:size={18} />
+                            <Clock className="text-indigo-500 w-4 h-4 md:w-[18px] md:h-[18px]" />
                             <input type="datetime-local" value={subtaskDeadline} onChange={(e) => setSubtaskDeadline(e.target.value)} className="bg-transparent border-none w-full focus:ring-0 p-0 font-bold text-sm md:text-base"/>
                           </div>
                           <button onClick={() => addSubtask(goal.id)} className="w-full bg-slate-900 text-white py-3.5 md:py-4 rounded-xl md:rounded-2xl font-black uppercase tracking-widest text-xs md:text-sm hover:bg-indigo-600 transition-all">Xác nhận hạng mục</button>
@@ -618,7 +735,7 @@ export default function App() {
 
                       <div className="space-y-3 md:space-y-4">
                         {goal.subtasks.map(sub => (
-                          <div key={sub.id} className="group flex items-center gap-4 md:gap-5 bg-white p-4 md:p-5 rounded-[1.2rem] md:rounded-[1.5rem] border-2 border-transparent hover:border-indigo-100 shadow-sm transition-all">
+                          <div key={sub.id} className="group flex items-center gap-4 md:gap-5 bg-white p-4 md:p-5 rounded-[1.2rem] md:rounded-[1.5rem] border-2 border-indigo-50 border-l-4 border-l-indigo-400 hover:border-indigo-200 hover:border-l-indigo-600 shadow-sm hover:shadow-md transition-all">
                             {editingSubtaskId === sub.id ? (
                               <div className="w-full space-y-3">
                                 <input
@@ -651,36 +768,36 @@ export default function App() {
                             ) : (
                               <>
                                 <button onClick={() => toggleSubtask(goal.id, sub.id, sub.completed)} className={`transform active:scale-75 transition-all ${sub.completed ? "text-emerald-500" : "text-slate-100 hover:text-emerald-400"}`}>
-                                  {sub.completed ? <CheckCircle2 size={24} md:size={28} /> : <Circle size={24} md:size={28} />}
+                                  {sub.completed ? <CheckCircle2 className="w-5 h-5 md:w-7 md:h-7" /> : <Circle className="w-5 h-5 md:w-7 md:h-7" />}
                                 </button>
-                                <div className="flex-grow">
-                                  <p className={`font-bold text-base md:text-lg tracking-tight ${sub.completed ? "text-slate-300 line-through" : "text-slate-700"}`}>{sub.text}</p>
+                                <div className="flex-grow min-w-0">
+                                  <p className={`font-bold text-sm md:text-lg tracking-tight truncate-mobile ${sub.completed ? "text-slate-300 line-through" : "text-slate-700"}`}>{sub.text}</p>
                                   {(sub.workloadValue || sub.deadline) && (
-                                    <div className="flex gap-3 md:gap-4 mt-1.5">
+                                    <div className="flex flex-wrap gap-2 md:gap-4 mt-1">
                                       {sub.weight > 0 && (
-                                        <div className="flex items-center gap-1 bg-slate-100 text-slate-600 px-2.5 py-0.5 rounded-full text-[9px] md:text-[10px] font-black uppercase tracking-widest">
-                                          <Percent size={10} /> {sub.weight}%
+                                        <div className="flex items-center gap-1 bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full text-[8px] md:text-[10px] font-black uppercase tracking-widest whitespace-nowrap">
+                                          <Percent size={8} /> {sub.weight}%
                                         </div>
                                       )}
                                       {sub.workloadValue && (
-                                        <div className="flex items-center gap-1 bg-indigo-50 text-indigo-700 px-2.5 py-0.5 rounded-full text-[9px] md:text-[10px] font-black uppercase tracking-widest">
-                                          <Ruler size={10} /> {sub.workloadValue} {sub.workloadUnit}
+                                        <div className="flex items-center gap-1 bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full text-[8px] md:text-[10px] font-black uppercase tracking-widest whitespace-nowrap">
+                                          <Ruler size={8} /> {sub.workloadValue} {sub.workloadUnit}
                                         </div>
                                       )}
                                       {sub.deadline && (
-                                        <div className="flex items-center gap-1 text-slate-400 text-[9px] md:text-[10px] font-black uppercase tracking-widest">
-                                          <Clock size={10} /> {new Date(sub.deadline).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
+                                        <div className="flex items-center gap-1 text-slate-400 text-[8px] md:text-[10px] font-black uppercase tracking-widest whitespace-nowrap">
+                                          <Clock size={8} /> {new Date(sub.deadline).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
                                         </div>
                                       )}
                                     </div>
                                   )}
                                 </div>
-                                <div className="flex gap-1 md:gap-1.5 transition-all">
-                                  <button onClick={() => startEditingSubtask(sub)} className="p-2 bg-indigo-50 text-indigo-600 border border-indigo-100 rounded-lg transition-all shadow-sm">
-                                    <Edit3 size={14} md:size={18} />
+                                <div className="flex gap-1 transition-all opacity-100 sm:opacity-0 group-hover:opacity-100">
+                                  <button onClick={() => startEditingSubtask(sub)} className="p-1.5 bg-indigo-50 text-indigo-600 border border-indigo-100 rounded-lg transition-all shadow-sm">
+                                    <Edit3 className="w-3 h-3 md:w-[18px] md:h-[18px]" />
                                   </button>
-                                  <button onClick={() => deleteSubtask(goal.id, sub.id)} className="p-2 bg-red-50 text-red-600 border border-red-100 rounded-lg transition-all shadow-sm">
-                                    <Trash2 size={14} md:size={18} />
+                                  <button onClick={() => deleteSubtask(goal.id, sub.id)} className="p-1.5 bg-red-50 text-red-600 border border-red-100 rounded-lg transition-all shadow-sm">
+                                    <Trash2 className="w-3 h-3 md:w-[18px] md:h-[18px]" />
                                   </button>
                                 </div>
                               </>
@@ -696,7 +813,7 @@ export default function App() {
           </AnimatePresence>
         </div>
       </div>
-    ) : (
+    ) : viewMode === 'stats' ? (
           <motion.div 
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -824,23 +941,119 @@ export default function App() {
                </div>
             </div>
           </motion.div>
+        ) : (
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.98 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white rounded-[2.5rem] p-8 md:p-10 border border-slate-100 shadow-2xl shadow-slate-200/40"
+          >
+            <div className="flex items-center justify-between mb-10">
+              <div className="flex items-center gap-4">
+                <div className="bg-indigo-50 text-indigo-600 p-3 rounded-2xl">
+                  <Calendar size={24} />
+                </div>
+                <div>
+                  <h3 className="text-2xl font-black text-slate-900 tracking-tight">Lịch trình</h3>
+                  <p className="text-slate-400 font-bold text-sm uppercase tracking-widest">
+                    {calendarMonth.toLocaleDateString('vi-VN', { month: 'long', year: 'numeric' })}
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <button 
+                  onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))}
+                  className="p-2 hover:bg-slate-50 rounded-xl border border-slate-100 text-slate-400 transition-all"
+                >
+                  <ChevronLeft size={20} />
+                </button>
+                <button 
+                   onClick={() => setCalendarMonth(new Date())}
+                   className="px-4 py-2 hover:bg-slate-50 rounded-xl border border-slate-100 text-[10px] font-black uppercase tracking-widest text-slate-400 transition-all"
+                >
+                  Hôm nay
+                </button>
+                <button 
+                  onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1))}
+                  className="p-2 hover:bg-slate-50 rounded-xl border border-slate-100 text-slate-400 transition-all"
+                >
+                  <ChevronRight size={20} />
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-7 mb-4">
+              {['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'].map(d => (
+                <div key={d} className="text-center text-[10px] font-black text-slate-300 uppercase tracking-widest mb-2">{d}</div>
+              ))}
+              {Array.from({ length: (new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), 1).getDay() || 7) - 1 }).map((_, i) => (
+                <div key={`empty-${i}`} className="h-16 md:h-24"></div>
+              ))}
+              {Array.from({ length: new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 0).getDate() }).map((_, i) => {
+                const day = i + 1;
+                const dateStr = `${calendarMonth.getFullYear()}-${String(calendarMonth.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                const dayGoals = goals.filter(g => isGoalInDate(g, dateStr));
+                const isToday = dateStr === new Date().toISOString().split('T')[0];
+                const isSelected = dateStr === selectedDate;
+
+                return (
+                  <button
+                    key={day}
+                    onClick={() => {
+                      setSelectedDate(dateStr);
+                      setViewMode('daily');
+                    }}
+                    className={`h-16 md:h-24 border border-slate-50 relative flex flex-col items-center justify-center transition-all group overflow-hidden ${
+                      isSelected ? "bg-indigo-50/50" : "hover:bg-slate-50"
+                    }`}
+                  >
+                    <span className={`text-base md:text-xl font-black transition-all ${
+                      isToday ? "text-indigo-600" : isSelected ? "text-slate-900" : "text-slate-400 group-hover:text-slate-600"
+                    }`}>
+                      {day}
+                    </span>
+                    {isToday && <div className="w-1.5 h-1.5 bg-indigo-600 rounded-full mt-1"></div>}
+                    <div className="mt-2 flex gap-0.5 md:gap-1">
+                      {dayGoals.map((g, idx) => (
+                        <div key={idx} className={`w-1.5 h-1.5 md:w-2 md:h-2 rounded-full ${g.completed ? "bg-emerald-500" : "bg-indigo-300"}`}></div>
+                      ))}
+                    </div>
+                    {isSelected && <div className="absolute left-0 top-0 w-1 h-full bg-indigo-600"></div>}
+                  </button>
+                );
+              })}
+            </div>
+            
+            <div className="mt-8 pt-8 border-t border-slate-50 flex items-center justify-between text-xs font-bold text-slate-400 uppercase tracking-widest">
+              <div className="flex gap-4">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 bg-indigo-300 rounded-full"></div>
+                  <span>Đang thực hiện</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 bg-emerald-500 rounded-full"></div>
+                  <span>Đã xong</span>
+                </div>
+              </div>
+              <div>{new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 0).getDate()} ngày</div>
+            </div>
+          </motion.div>
         )}
 
         {/* Tips Section */}
         <section className="mt-12 md:mt-20 grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
-           <div className="bg-white p-6 md:p-8 rounded-[1.5rem] md:rounded-[2.5rem] border border-slate-100 shadow-xl shadow-slate-200/30">
-              <div className="w-10 h-10 md:w-12 md:h-12 bg-indigo-50 rounded-xl md:rounded-2xl flex items-center justify-center mb-4 md:mb-6">
-                <Target size={20} md:size={24} className="text-indigo-600" />
+           <div className="bg-white p-5 md:p-8 rounded-[1.5rem] md:rounded-[2.5rem] border border-slate-100 shadow-xl shadow-slate-200/30">
+              <div className="w-8 h-8 md:w-12 md:h-12 bg-indigo-50 rounded-xl md:rounded-2xl flex items-center justify-center mb-3 md:mb-6">
+                <Target className="text-indigo-600 w-4 h-4 md:w-6 md:h-6" />
               </div>
-              <h4 className="text-base md:text-lg font-black text-slate-900 mb-2">Quy tắc Số 3</h4>
-              <p className="text-slate-500 text-xs md:text-sm leading-relaxed font-medium">Bằng cách giới hạn 3 mục tiêu, bộ não của bạn sẽ ưu tiên những việc thực sự mang lại kết quả lớn nhất.</p>
+              <h4 className="text-sm md:text-lg font-black text-slate-900 mb-1.5 md:mb-2">Quy tắc Số 3</h4>
+              <p className="text-slate-500 text-[11px] md:text-sm leading-relaxed font-medium">Bằng cách giới hạn 3 mục tiêu, bộ não của bạn sẽ ưu tiên những việc thực sự mang lại kết quả lớn nhất.</p>
            </div>
-           <div className="bg-white p-6 md:p-8 rounded-[1.5rem] md:rounded-[2.5rem] border border-slate-100 shadow-xl shadow-slate-200/30">
-              <div className="w-10 h-10 md:w-12 md:h-12 bg-emerald-50 rounded-xl md:rounded-2xl flex items-center justify-center mb-4 md:mb-6">
-                <Layers size={20} md:size={24} className="text-emerald-600" />
+           <div className="bg-white p-5 md:p-8 rounded-[1.5rem] md:rounded-[2.5rem] border border-slate-100 shadow-xl shadow-slate-200/30">
+              <div className="w-8 h-8 md:w-12 md:h-12 bg-emerald-50 rounded-xl md:rounded-2xl flex items-center justify-center mb-3 md:mb-6">
+                <Layers className="text-emerald-600 w-4 h-4 md:w-6 md:h-6" />
               </div>
-              <h4 className="text-base md:text-lg font-black text-slate-900 mb-2">Chia nhỏ để thắng</h4>
-              <p className="text-slate-500 text-xs md:text-sm leading-relaxed font-medium">Các hạng mục nhỏ giúp công việc bớt đáng sợ hơn và tạo động lực liên tục khi bạn tích hoàn thành.</p>
+              <h4 className="text-sm md:text-lg font-black text-slate-900 mb-1.5 md:mb-2">Chia nhỏ để thắng</h4>
+              <p className="text-slate-500 text-[11px] md:text-sm leading-relaxed font-medium">Các hạng mục nhỏ giúp công việc bớt đáng sợ hơn và tạo động lực liên tục khi bạn tích hoàn thành.</p>
            </div>
         </section>
 
@@ -850,6 +1063,57 @@ export default function App() {
              <span>DayFlow Cloud Edition</span>
            </div>
         </footer>
+
+        {/* Weight Warning Modal */}
+        <AnimatePresence>
+          {showWeightWarning && (
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm"
+            >
+              <motion.div 
+                initial={{ scale: 0.9, y: 20 }}
+                animate={{ scale: 1, y: 0 }}
+                exit={{ scale: 0.9, y: 20 }}
+                className="bg-white rounded-[2rem] p-8 max-w-sm w-full shadow-2xl border border-slate-100"
+              >
+                <div className="w-16 h-16 bg-amber-50 rounded-2xl flex items-center justify-center mb-6 mx-auto">
+                  <Percent className="text-amber-500" size={32} />
+                </div>
+                <h3 className="text-xl font-black text-slate-900 text-center mb-3">Thiếu tỷ trọng</h3>
+                <p className="text-slate-500 text-sm text-center font-medium leading-relaxed mb-8">
+                  Bạn chưa nhập tỷ trọng % cho hạng mục này. Hệ thống sẽ tự động tính toán tỷ trọng còn lại (thường là 100% nếu là mục đầu tiên). 
+                  Bạn có muốn tiếp tục không?
+                </p>
+                <div className="space-y-3">
+                  <button 
+                    onClick={() => {
+                      if (warningGoalId) {
+                        addSubtask(warningGoalId, true);
+                        setShowWeightWarning(false);
+                        setWarningGoalId(null);
+                      }
+                    }}
+                    className="w-full bg-slate-900 text-white py-4 rounded-xl font-black uppercase tracking-widest text-xs hover:bg-slate-800 transition-all font-sans"
+                  >
+                    Tiếp tục tự động
+                  </button>
+                  <button 
+                    onClick={() => {
+                      setShowWeightWarning(false);
+                      setWarningGoalId(null);
+                    }}
+                    className="w-full bg-white text-slate-400 py-4 rounded-xl font-black uppercase tracking-widest text-xs border border-slate-100 hover:bg-slate-50 transition-all font-sans"
+                  >
+                    Quay lại chỉnh sửa
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );
