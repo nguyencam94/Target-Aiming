@@ -27,5 +27,13 @@ service cloud.firestore {
         allow delete: if isOwner(resource.data.userId);
       }
     }
+
+    match /schedules/{scheduleId} {
+      allow read: if isOwner(resource.data.userId);
+      allow create: if isSignedIn() 
+        && request.resource.data.userId == request.auth.uid;
+      allow update: if isOwner(resource.data.userId);
+      allow delete: if isOwner(resource.data.userId);
+    }
   }
 }

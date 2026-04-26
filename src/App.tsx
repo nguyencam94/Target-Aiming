@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { 
   Plus, Check, Trash2, Circle, CheckCircle2, 
   Calendar as CalendarIcon, ChevronDown, ChevronUp, 
-  Target, Layers, Ruler, AlertCircle, Clock,
+  Target, Layers, Ruler, AlertCircle, Clock, Bell,
   LogIn, LogOut, User as UserIcon, Edit3,
   Percent, BarChart2, Home, List as ListIcon,
   ChevronLeft, ChevronRight, Calendar
@@ -43,12 +43,24 @@ interface Goal {
   subtasks: SubTask[];
 }
 
+interface ScheduleItem {
+  id: string;
+  activity: string;
+  startTime: string;
+  endTime: string;
+  completed: boolean;
+  date: string;
+  userId: string;
+  createdAt: any;
+}
+
 type ViewMode = 'daily' | 'stats' | 'calendar';
 type StatsPeriod = 'day' | 'week' | 'month' | 'year';
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [goals, setGoals] = useState<Goal[]>([]);
+  const [schedules, setSchedules] = useState<ScheduleItem[]>([]);
   const [newGoalText, setNewGoalText] = useState("");
   const [newGoalDeadline, setNewGoalDeadline] = useState("");
   const [newGoalWeight, setNewGoalWeight] = useState("33");
@@ -80,6 +92,61 @@ export default function App() {
   const [editSubtaskUnit, setEditSubtaskUnit] = useState("");
   const [editSubtaskWeight, setEditSubtaskWeight] = useState("");
 
+  // Schedule form state
+  const [isAddingSchedule, setIsAddingSchedule] = useState(false);
+  const [newActivity, setNewActivity] = useState("");
+  const [newStartTime, setNewStartTime] = useState("");
+  const [newEndTime, setNewEndTime] = useState("");
+
+  const [notificationsEnabled, setNotificationsEnabled] = useState(false);
+
+  useEffect(() => {
+    if ("Notification" in window) {
+      setNotificationsEnabled(Notification.permission === "granted");
+    }
+  }, []);
+
+  const requestNotificationPermission = async () => {
+    if (!("Notification" in window)) {
+      alert("Trình duyệt của bạn không hỗ trợ thông báo.");
+      return;
+    }
+    
+    const permission = await Notification.requestPermission();
+    if (permission === "granted") {
+      setNotificationsEnabled(true);
+      new Notification("DayFlow", {
+        body: "Tuyệt vời! Bạn sẽ nhận được lời nhắc cho lịch trình của mình.",
+        icon: "/favicon.ico"
+      });
+    }
+  };
+
+  // Background check for notifications
+  useEffect(() => {
+    if (!notificationsEnabled || schedules.length === 0) return;
+
+    const interval = setInterval(() => {
+      const now = new Date();
+      const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+      
+      schedules.forEach(item => {
+        if (!item.completed && item.startTime === currentTime && item.date === selectedDate) {
+          // Prevent multiple notifications for the same minute
+          const lastNotified = localStorage.getItem(`notified_${item.id}`);
+          if (lastNotified !== currentTime) {
+            new Notification("Nhắc nhở lịch trình", {
+              body: `Đã đến giờ: ${item.activity} (${item.startTime})`,
+              icon: "/favicon.ico"
+            });
+            localStorage.setItem(`notified_${item.id}`, currentTime);
+          }
+        }
+      });
+    }, 30000); // Check every 30 seconds
+
+    return () => clearInterval(interval);
+  }, [notificationsEnabled, schedules, selectedDate]);
   const [isIframe, setIsIframe] = useState(false);
   const [showWeightWarning, setShowWeightWarning] = useState(false);
   const [warningGoalId, setWarningGoalId] = useState<string | null>(null);
@@ -95,6 +162,20 @@ export default function App() {
     });
     return () => unsubscribeAuth();
   }, []);
+
+  // Helper to handle and log Firestore errors for debugging
+  const handleFirestoreError = (error: any, operationType: string, path: string) => {
+    const errInfo = {
+      error: error?.message || String(error),
+      authInfo: {
+        userId: auth.currentUser?.uid,
+        email: auth.currentUser?.email,
+      },
+      operationType,
+      path
+    };
+    console.error('Firestore Error:', JSON.stringify(errInfo));
+  };
 
   useEffect(() => {
     if (!user) return;
@@ -129,11 +210,28 @@ export default function App() {
           });
           
           setGoals(prev => prev.map(g => g.id === goal.id ? { ...g, subtasks } : g));
-        });
+        }, (error) => handleFirestoreError(error, 'list', `goals/${goal.id}/subtasks`));
       });
-    });
+    }, (error) => handleFirestoreError(error, 'list', 'goals'));
 
-    return () => unsubscribeGoals();
+    const sq = query(
+      collection(db, "schedules"),
+      where("userId", "==", user.uid),
+      orderBy("startTime", "asc")
+    );
+
+    const unsubscribeSchedules = onSnapshot(sq, (snapshot) => {
+      const scheduleList: ScheduleItem[] = [];
+      snapshot.forEach((docSnap) => {
+        scheduleList.push({ id: docSnap.id, ...docSnap.data() } as ScheduleItem);
+      });
+      setSchedules(scheduleList);
+    }, (error) => handleFirestoreError(error, 'list', 'schedules'));
+
+    return () => {
+      unsubscribeGoals();
+      unsubscribeSchedules();
+    };
   }, [user]);
 
   const login = () => signInWithPopup(auth, googleProvider);
@@ -251,6 +349,16 @@ export default function App() {
     }
   };
 
+  const moveGoalToCurrentDate = async (id: string) => {
+    try {
+      await updateDoc(doc(db, "goals", id), {
+        date: selectedDate
+      });
+    } catch (err) {
+      console.error("Failed to move goal", err);
+    }
+  };
+
   const deleteGoal = async (id: string) => {
     if (!confirm("Xóa mục tiêu này và tất cả hạng mục con?")) return;
     try {
@@ -315,6 +423,46 @@ export default function App() {
     }
   };
 
+  const addScheduleItem = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newActivity.trim() || !newStartTime || !newEndTime || !user) return;
+
+    try {
+      await addDoc(collection(db, "schedules"), {
+        activity: newActivity,
+        startTime: newStartTime,
+        endTime: newEndTime,
+        completed: false,
+        userId: user.uid,
+        date: selectedDate,
+        createdAt: serverTimestamp()
+      });
+      
+      setNewActivity("");
+      setNewStartTime("");
+      setNewEndTime("");
+      setIsAddingSchedule(false);
+    } catch (err) {
+      console.error("Failed to add schedule item", err);
+    }
+  };
+
+  const toggleScheduleItem = async (id: string, completed: boolean) => {
+    try {
+      await updateDoc(doc(db, "schedules", id), { completed: !completed });
+    } catch (err) {
+      console.error("Failed to toggle schedule item", err);
+    }
+  };
+
+  const deleteScheduleItem = async (id: string) => {
+    try {
+      await deleteDoc(doc(db, "schedules", id));
+    } catch (err) {
+      console.error("Failed to delete schedule item", err);
+    }
+  };
+
   const startEditingSubtask = (sub: SubTask) => {
     setEditingSubtaskId(sub.id);
     setEditSubtaskText(sub.text);
@@ -362,6 +510,50 @@ export default function App() {
   const overallProgress = calculateOverallProgress();
 
   const currentDailyGoals = goals.filter(g => isGoalInDate(g, selectedDate));
+  const currentDailySchedules = schedules.filter(s => s.date === selectedDate);
+
+  const [activeQuoteIndex, setActiveQuoteIndex] = useState(0);
+  const quotes = [
+    {
+      name: "Steve Jobs",
+      title: "Co-founder Apple",
+      initials: "SJ",
+      text: "\"Hãy coi hôm nay là ngày cuối cùng của cuộc đời bạn đi.\"",
+      color: "bg-slate-900",
+      accent: "bg-indigo-500/10"
+    },
+    {
+      name: "Elon Musk",
+      title: "Visionary Entrepreneur",
+      initials: "EM",
+      text: "\"1% nỗ lực hôm nay là thành công lớn mai sau.\"",
+      color: "bg-indigo-600",
+      accent: "bg-white/10"
+    },
+    {
+      name: "Bill Gates",
+      title: "Co-founder Microsoft",
+      initials: "BG",
+      text: "\"Kiên nhẫn là yếu tố quan trọng của thành công.\"",
+      color: "bg-emerald-600",
+      accent: "bg-white/10"
+    },
+    {
+      name: "Chung Ju-yung",
+      title: "Founder of Hyundai Group",
+      initials: "CJY",
+      text: "\"Không bao giờ là thất bại, tất cả chỉ là thử thách.\"",
+      color: "bg-amber-600",
+      accent: "bg-white/10"
+    }
+  ];
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setActiveQuoteIndex((prev) => (prev + 1) % quotes.length);
+    }, 10000);
+    return () => clearInterval(timer);
+  }, [quotes.length]);
 
   if (!user) {
     return (
@@ -417,6 +609,16 @@ export default function App() {
               >
                 <Calendar className="w-4 h-4 md:w-[18px] md:h-[18px]" />
               </button>
+
+              {!notificationsEnabled && (
+                <button 
+                  onClick={requestNotificationPermission}
+                  className="p-1.5 md:p-2 rounded-xl bg-amber-50 text-amber-600 border border-amber-100 animate-pulse transition-all hover:bg-amber-100"
+                  title="Bật thông báo nhắc nhở"
+                >
+                  <Bell className="w-4 h-4 md:w-[18px] md:h-[18px]" />
+                </button>
+              )}
               <div className="hidden sm:flex flex-col items-end mx-2">
                 <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">
                   {selectedDate === new Date().toISOString().split('T')[0] ? "Hôm nay" : "Đang xem"}
@@ -540,6 +742,52 @@ export default function App() {
 
         {/* Goals List */}
         <div className="space-y-6 md:space-y-8">
+          {/* Backlog Section */}
+          {(() => {
+            const backlogGoals = goals.filter(g => {
+              if (g.completed) return false;
+              let gDateStr = g.date;
+              if (!gDateStr && g.createdAt) {
+                const d = g.createdAt instanceof Timestamp ? g.createdAt.toDate() : 
+                          (typeof g.createdAt === 'string' ? new Date(g.createdAt) : new Date());
+                gDateStr = d.toISOString().split('T')[0];
+              }
+              return gDateStr < selectedDate;
+            });
+
+            if (backlogGoals.length === 0) return null;
+
+            return (
+              <motion.div 
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="bg-amber-50/50 border-2 border-amber-100/50 rounded-[2rem] p-6 mb-8"
+              >
+                <div className="flex items-center gap-3 mb-4">
+                  <AlertCircle className="text-amber-500 w-5 h-5" />
+                  <h3 className="text-sm font-black text-amber-700 uppercase tracking-widest">Mục tiêu tồn đọng ({backlogGoals.length})</h3>
+                </div>
+                <div className="space-y-3">
+                  {backlogGoals.map(goal => (
+                    <div key={goal.id} className="flex items-center justify-between bg-white/60 p-4 rounded-2xl border border-amber-100 shadow-sm">
+                      <div className="flex items-center gap-3 overflow-hidden">
+                        <div className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
+                        <span className="text-sm font-bold text-slate-700 truncate">{goal.text}</span>
+                        <span className="text-[10px] bg-amber-100 text-amber-600 px-2 py-0.5 rounded-full font-bold shrink-0">{goal.date}</span>
+                      </div>
+                      <button 
+                        onClick={() => moveGoalToCurrentDate(goal.id)}
+                        className="flex items-center gap-2 bg-amber-500 text-white px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider hover:bg-amber-600 transition-all shadow-sm shadow-amber-200"
+                      >
+                        <CalendarIcon size={12} /> Chuyển sang hôm nay
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </motion.div>
+            );
+          })()}
+
           <AnimatePresence mode="popLayout">
             {currentDailyGoals.map((goal) => (
               <motion.div
@@ -812,6 +1060,121 @@ export default function App() {
             ))}
           </AnimatePresence>
         </div>
+
+        {/* Schedule / Day Planner Section */}
+        <section className="mt-12 md:mt-20">
+          <div className="flex items-center justify-between mb-6 md:mb-10">
+            <h2 className="text-xl md:text-3xl font-black text-slate-900 tracking-tight flex items-center gap-3">
+              <Clock className="text-indigo-600" size={24} /> Lịch trình trong ngày
+            </h2>
+            <button 
+              onClick={() => setIsAddingSchedule(!isAddingSchedule)}
+              className="bg-indigo-50 text-indigo-600 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-indigo-600 hover:text-white transition-all border border-indigo-100"
+            >
+              {isAddingSchedule ? "Đóng" : "Lên kế hoạch"}
+            </button>
+          </div>
+
+          <AnimatePresence>
+            {isAddingSchedule && (
+              <motion.form 
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: "auto", opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                onSubmit={addScheduleItem}
+                className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-xl mb-8 overflow-hidden"
+              >
+                <div className="space-y-4">
+                  <input
+                    type="text"
+                    value={newActivity}
+                    onChange={(e) => setNewActivity(e.target.value)}
+                    placeholder="Bạn sẽ làm gì? (ví dụ: Tập thể dục, Họp team...)"
+                    className="w-full bg-slate-50 border-none rounded-2xl px-5 py-4 font-bold text-slate-900 focus:ring-4 focus:ring-indigo-100 placeholder:text-slate-300"
+                  />
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-2">Bắt đầu</label>
+                      <input 
+                        type="time" 
+                        value={newStartTime}
+                        onChange={(e) => setNewStartTime(e.target.value)}
+                        className="w-full bg-slate-50 border-none rounded-xl px-4 py-3 font-bold text-slate-700 focus:ring-4 focus:ring-indigo-100"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-2">Kết thúc</label>
+                      <input 
+                        type="time" 
+                        value={newEndTime}
+                        onChange={(e) => setNewEndTime(e.target.value)}
+                        className="w-full bg-slate-50 border-none rounded-xl px-4 py-3 font-bold text-slate-700 focus:ring-4 focus:ring-indigo-100"
+                      />
+                    </div>
+                  </div>
+                  <button 
+                    type="submit"
+                    className="w-full bg-slate-900 text-white py-4 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-indigo-600 transition-all shadow-xl shadow-indigo-100"
+                  >
+                    Xác nhận thời gian
+                  </button>
+                </div>
+              </motion.form>
+            )}
+          </AnimatePresence>
+
+          <div className="relative space-y-6">
+            {/* Vertical Line */}
+            {currentDailySchedules.length > 0 && (
+              <div className="absolute left-6 top-2 bottom-2 w-0.5 bg-slate-100 hidden md:block" />
+            )}
+
+            {currentDailySchedules.length === 0 ? (
+              <div className="bg-white border border-dashed border-slate-200 rounded-[2rem] p-12 text-center">
+                <Clock className="mx-auto text-slate-200 mb-4" size={40} />
+                <p className="text-slate-400 font-bold text-sm tracking-tight">Chưa có lịch trình cho ngày này.</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {currentDailySchedules.map((item, index) => (
+                  <motion.div 
+                    key={item.id}
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: index * 0.1 }}
+                    className={`relative flex items-center gap-4 md:gap-8 bg-white p-5 rounded-[1.5rem] md:rounded-[2rem] border shadow-sm group transition-all ${item.completed ? "border-emerald-100 bg-emerald-50/20" : "border-slate-100 hover:border-indigo-100 hover:shadow-md"}`}
+                  >
+                    {/* Checkbox / Bullet */}
+                    <button 
+                      onClick={() => toggleScheduleItem(item.id, item.completed)}
+                      className={`z-10 w-12 h-12 rounded-2xl flex items-center justify-center transition-all shrink-0 ${item.completed ? "bg-emerald-500 text-white shadow-lg shadow-emerald-100" : "bg-slate-50 text-slate-300 border border-slate-100 hover:bg-indigo-50 hover:text-indigo-500"}`}
+                    >
+                      {item.completed ? <CheckCircle2 size={24} /> : <Circle size={24} />}
+                    </button>
+
+                    <div className="flex-grow flex flex-col md:flex-row md:items-center justify-between gap-2">
+                      <div className="space-y-1">
+                        <h4 className={`text-sm md:text-lg font-black tracking-tight ${item.completed ? "text-slate-400 line-through font-bold" : "text-slate-900"}`}>
+                          {item.activity}
+                        </h4>
+                        <div className="flex items-center gap-2 text-[10px] md:text-xs font-black text-indigo-500 uppercase tracking-widest">
+                          <Clock size={12} />
+                          <span>{item.startTime} - {item.endTime}</span>
+                        </div>
+                      </div>
+                      <button 
+                        onClick={() => deleteScheduleItem(item.id)}
+                        className="opacity-0 group-hover:opacity-100 p-2 text-slate-300 hover:text-red-500 transition-all absolute top-2 right-2 md:relative md:top-0 md:right-0"
+                      >
+                        <Trash2 size={18} />
+                      </button>
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
       </div>
     ) : viewMode === 'stats' ? (
           <motion.div 
@@ -1039,7 +1402,48 @@ export default function App() {
           </motion.div>
         )}
 
-        {/* Tips Section */}
+        {/* Inspiration Slider Section */}
+        <section className="mt-12 md:mt-20">
+          <h2 className="text-xl md:text-3xl font-black text-slate-900 tracking-tight flex items-center gap-3 mb-8 md:mb-12">
+             Cảm hứng mỗi ngày
+          </h2>
+          <div className="relative h-[250px] md:h-[350px]">
+            <AnimatePresence mode="wait">
+              <motion.div 
+                key={activeQuoteIndex}
+                initial={{ opacity: 0, x: 50 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -50 }}
+                className={`absolute inset-0 overflow-hidden ${quotes[activeQuoteIndex].color} rounded-[2rem] md:rounded-[3rem] p-8 md:p-12 text-white shadow-2xl shadow-indigo-100 flex flex-col justify-center`}
+              >
+                <div className={`absolute top-0 right-0 w-64 h-64 ${quotes[activeQuoteIndex].accent} rounded-full -mr-20 -mt-20 blur-3xl`}></div>
+                <div className="relative z-10">
+                  <div className="flex items-center gap-4 mb-8">
+                    <div className="w-12 h-12 md:w-16 md:h-16 bg-white/10 rounded-2xl flex items-center justify-center font-black text-xl md:text-2xl border border-white/20">
+                      {quotes[activeQuoteIndex].initials}
+                    </div>
+                    <div>
+                      <h4 className="font-black text-base md:text-lg tracking-tight">{quotes[activeQuoteIndex].name}</h4>
+                      <p className="text-white/60 text-[10px] md:text-xs font-black uppercase tracking-widest">{quotes[activeQuoteIndex].title}</p>
+                    </div>
+                  </div>
+                  <p className="text-lg md:text-3xl font-bold leading-tight italic mb-8 max-w-2xl">
+                    {quotes[activeQuoteIndex].text}
+                  </p>
+                  <div className="flex gap-2">
+                    {quotes.map((_, i) => (
+                      <div 
+                        key={i} 
+                        className={`h-1.5 rounded-full transition-all duration-500 ${i === activeQuoteIndex ? "w-8 bg-white" : "w-2 bg-white/20"}`}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </motion.div>
+            </AnimatePresence>
+          </div>
+        </section>
+
         <section className="mt-12 md:mt-20 grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
            <div className="bg-white p-5 md:p-8 rounded-[1.5rem] md:rounded-[2.5rem] border border-slate-100 shadow-xl shadow-slate-200/30">
               <div className="w-8 h-8 md:w-12 md:h-12 bg-indigo-50 rounded-xl md:rounded-2xl flex items-center justify-center mb-3 md:mb-6">

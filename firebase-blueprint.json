@@ -28,6 +28,21 @@
         "createdAt": { "type": "string" }
       },
       "required": ["goalId", "text", "userId", "createdAt"]
+    },
+    "Schedule": {
+      "title": "Schedule",
+      "description": "A time-based activity for the daily timeline",
+      "type": "object",
+      "properties": {
+        "activity": { "type": "string" },
+        "startTime": { "type": "string" },
+        "endTime": { "type": "string" },
+        "completed": { "type": "boolean" },
+        "userId": { "type": "string" },
+        "date": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["activity", "startTime", "endTime", "userId", "date", "createdAt"]
     }
   },
   "firestore": {
@@ -38,6 +53,10 @@
     "goals/{goalId}/subtasks/{subtaskId}": {
       "schema": "SubTask",
       "description": "Subtasks for a specific goal"
+    },
+    "schedules/{scheduleId}": {
+      "schema": "Schedule",
+      "description": "Daily time-based plan"
     }
   }
 }
