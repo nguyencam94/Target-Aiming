@@ -148,8 +148,39 @@ export default function App() {
     return () => clearInterval(interval);
   }, [notificationsEnabled, schedules, selectedDate]);
   const [isIframe, setIsIframe] = useState(false);
+  const [editingScheduleId, setEditingScheduleId] = useState<string | null>(null);
+  const [editActivity, setEditActivity] = useState("");
+  const [editStartTime, setEditStartTime] = useState("");
+  const [editEndTime, setEditEndTime] = useState("");
   const [showWeightWarning, setShowWeightWarning] = useState(false);
   const [warningGoalId, setWarningGoalId] = useState<string | null>(null);
+
+  const startEditSchedule = (item: any) => {
+    setEditingScheduleId(item.id);
+    setEditActivity(item.activity);
+    setEditStartTime(item.startTime);
+    setEditEndTime(item.endTime || "");
+  };
+
+  const cancelEditSchedule = () => {
+    setEditingScheduleId(null);
+  };
+
+  const updateScheduleItem = async () => {
+    if (!user || !editingScheduleId || !editActivity || !editStartTime) return;
+    try {
+      const scheduleRef = doc(db, "schedules", editingScheduleId);
+      await updateDoc(scheduleRef, {
+        activity: editActivity,
+        startTime: editStartTime,
+        endTime: editEndTime,
+        updatedAt: serverTimestamp(),
+      });
+      setEditingScheduleId(null);
+    } catch (err) {
+      console.error("Failed to update schedule item", err);
+    }
+  };
 
   useEffect(() => {
     setIsIframe(window.self !== window.top);
@@ -401,7 +432,7 @@ export default function App() {
       setSubtaskWorkload("");
       setSubtaskUnit("");
       setSubtaskWeight("0");
-      setAddingSubtaskTo(null);
+      // Removed setAddingSubtaskTo(null) to keep the subtask form open as it's part of the planning process
     } catch (err) {
       console.error("Failed to add subtask", err);
     }
@@ -441,7 +472,7 @@ export default function App() {
       setNewActivity("");
       setNewStartTime("");
       setNewEndTime("");
-      setIsAddingSchedule(false);
+      // Removed setIsAddingSchedule(false) to keep the form open as per user request
     } catch (err) {
       console.error("Failed to add schedule item", err);
     }
@@ -1135,39 +1166,90 @@ export default function App() {
                 <p className="text-slate-400 font-bold text-sm tracking-tight">Chưa có lịch trình cho ngày này.</p>
               </div>
             ) : (
-              <div className="space-y-4">
+              <div className="bg-white rounded-[2rem] border border-slate-100 shadow-xl overflow-hidden">
                 {currentDailySchedules.map((item, index) => (
                   <motion.div 
                     key={item.id}
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: index * 0.1 }}
-                    className={`relative flex items-center gap-4 md:gap-8 bg-white p-5 rounded-[1.5rem] md:rounded-[2rem] border shadow-sm group transition-all ${item.completed ? "border-emerald-100 bg-emerald-50/20" : "border-slate-100 hover:border-indigo-100 hover:shadow-md"}`}
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    className={`relative flex items-center gap-4 md:gap-8 p-5 md:p-6 transition-all ${index !== currentDailySchedules.length - 1 ? "border-b border-slate-50" : ""} ${item.completed ? "bg-emerald-50/20" : "hover:bg-slate-50/50"} group`}
                   >
                     {/* Checkbox / Bullet */}
                     <button 
                       onClick={() => toggleScheduleItem(item.id, item.completed)}
-                      className={`z-10 w-12 h-12 rounded-2xl flex items-center justify-center transition-all shrink-0 ${item.completed ? "bg-emerald-500 text-white shadow-lg shadow-emerald-100" : "bg-slate-50 text-slate-300 border border-slate-100 hover:bg-indigo-50 hover:text-indigo-500"}`}
+                      className={`z-10 w-10 h-10 md:w-12 md:h-12 rounded-xl md:rounded-2xl flex items-center justify-center transition-all shrink-0 ${item.completed ? "bg-emerald-500 text-white shadow-lg shadow-emerald-100" : "bg-slate-50 text-slate-300 border border-slate-100 hover:bg-indigo-50 hover:text-indigo-500"}`}
                     >
-                      {item.completed ? <CheckCircle2 size={24} /> : <Circle size={24} />}
+                      {item.completed ? <CheckCircle2 size={20} /> : <Circle size={20} />}
                     </button>
 
-                    <div className="flex-grow flex flex-col md:flex-row md:items-center justify-between gap-2">
-                      <div className="space-y-1">
-                        <h4 className={`text-sm md:text-lg font-black tracking-tight ${item.completed ? "text-slate-400 line-through font-bold" : "text-slate-900"}`}>
-                          {item.activity}
-                        </h4>
-                        <div className="flex items-center gap-2 text-[10px] md:text-xs font-black text-indigo-500 uppercase tracking-widest">
-                          <Clock size={12} />
-                          <span>{item.startTime} - {item.endTime}</span>
+                    <div className="flex-grow flex items-center justify-between gap-4">
+                      {editingScheduleId === item.id ? (
+                        <div className="flex-grow flex flex-col md:flex-row gap-3">
+                          <input 
+                            type="text" 
+                            value={editActivity}
+                            onChange={(e) => setEditActivity(e.target.value)}
+                            className="flex-grow bg-slate-50 border border-indigo-100 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            placeholder="Tên hoạt động..."
+                          />
+                          <div className="flex gap-2">
+                            <input 
+                              type="time" 
+                              value={editStartTime}
+                              onChange={(e) => setEditStartTime(e.target.value)}
+                              className="bg-slate-50 border border-indigo-100 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            />
+                            <input 
+                              type="time" 
+                              value={editEndTime}
+                              onChange={(e) => setEditEndTime(e.target.value)}
+                              className="bg-slate-50 border border-indigo-100 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            />
+                          </div>
+                          <div className="flex gap-2">
+                            <button 
+                              onClick={updateScheduleItem}
+                              className="bg-indigo-600 text-white px-4 py-2 rounded-xl text-sm font-black shadow-lg shadow-indigo-100 hover:bg-indigo-700"
+                            >
+                              Lưu
+                            </button>
+                            <button 
+                              onClick={cancelEditSchedule}
+                              className="bg-slate-100 text-slate-500 px-4 py-2 rounded-xl text-sm font-black hover:bg-slate-200"
+                            >
+                              Hủy
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                      <button 
-                        onClick={() => deleteScheduleItem(item.id)}
-                        className="opacity-0 group-hover:opacity-100 p-2 text-slate-300 hover:text-red-500 transition-all absolute top-2 right-2 md:relative md:top-0 md:right-0"
-                      >
-                        <Trash2 size={18} />
-                      </button>
+                      ) : (
+                        <>
+                          <div className="space-y-1">
+                            <h4 className={`text-sm md:text-lg font-black tracking-tight ${item.completed ? "text-slate-400 line-through font-bold" : "text-slate-900"}`}>
+                              {item.activity}
+                            </h4>
+                            <div className="flex items-center gap-2 text-[10px] md:text-xs font-black text-indigo-500 uppercase tracking-widest">
+                              <Clock size={12} />
+                              <span>{item.startTime} - {item.endTime}</span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <button 
+                              onClick={() => startEditSchedule(item)}
+                              className="opacity-0 group-hover:opacity-100 p-2 text-slate-300 hover:text-indigo-500 transition-all"
+                              title="Chỉnh sửa"
+                            >
+                              <Edit3 size={18} />
+                            </button>
+                            <button 
+                              onClick={() => deleteScheduleItem(item.id)}
+                              className="opacity-0 group-hover:opacity-100 p-2 text-slate-300 hover:text-red-500 transition-all"
+                              title="Xóa"
+                            >
+                              <Trash2 size={18} />
+                            </button>
+                          </div>
+                        </>
+                      )}
                     </div>
                   </motion.div>
                 ))}
