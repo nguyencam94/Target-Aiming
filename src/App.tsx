@@ -66,6 +66,7 @@ export default function App() {
   const [newGoalWeight, setNewGoalWeight] = useState("33");
   const [loading, setLoading] = useState(true);
   const [expandedGoalId, setExpandedGoalId] = useState<string | null>(null);
+  const [isBacklogExpanded, setIsBacklogExpanded] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>('daily');
   const [statsPeriod, setStatsPeriod] = useState<StatsPeriod>('day');
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
@@ -611,17 +612,17 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#f8fafc] text-[#1e293b] font-sans selection:bg-indigo-100 selection:text-indigo-900">
-      <div className="max-w-3xl mx-auto px-4 py-8 md:px-6 md:py-16">
+      <div className="max-w-3xl mx-auto px-4 py-4 md:px-6 md:py-8">
         {/* Header */}
-        <header className="mb-8 md:mb-12">
-          <div className="flex items-center justify-between mb-6 md:mb-8">
-            <div className="flex items-center gap-3 md:gap-4">
-              <div className="w-8 h-8 md:w-12 md:h-12 bg-indigo-600 rounded-xl md:rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-100">
-                <Target className="text-white w-4 h-4 md:w-6 md:h-6" />
-              </div>
-              <h1 className="text-xl md:text-3xl font-extrabold tracking-tight text-slate-900">DayFlow</h1>
-            </div>
+        <header className="mb-4 md:mb-6">
+          <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2 md:gap-3">
+              <div className="w-7 h-7 md:w-9 md:h-9 bg-indigo-600 rounded-lg md:rounded-xl flex items-center justify-center shadow-md shadow-indigo-100">
+                <Target className="text-white w-3.5 h-3.5 md:w-5 md:h-5" />
+              </div>
+              <h1 className="text-lg md:text-xl font-extrabold tracking-tight text-slate-900">DayFlow</h1>
+            </div>
+            <div className="flex items-center gap-1.5 md:gap-2">
               <button 
                 onClick={() => setViewMode('daily')}
                 className={`p-1.5 md:p-2 rounded-xl transition-all ${viewMode === 'daily' ? "bg-indigo-600 text-white shadow-lg" : "bg-white text-slate-400 border border-slate-100"}`}
@@ -658,56 +659,102 @@ export default function App() {
               </div>
               <button 
                 onClick={logout}
-                className="p-2.5 md:p-3 bg-white border border-slate-200 rounded-xl md:rounded-2xl text-slate-400 hover:text-red-500 hover:border-red-100 transition-all shadow-sm"
+                className="p-2 bg-white border border-slate-200 rounded-xl text-slate-400 hover:text-red-500 hover:border-red-100 transition-all shadow-sm"
                 title="Đăng xuất"
               >
-                <LogOut className="w-[18px] h-[18px] md:w-5 md:h-5" />
+                <LogOut className="w-[16px] h-[16px] md:w-[18px] md:h-[18px]" />
               </button>
             </div>
           </div>
 
-          {/* Progress Card */}
-          <div className="bg-indigo-600 rounded-[1.5rem] md:rounded-[2.5rem] p-5 md:p-8 shadow-2xl shadow-indigo-100 text-white relative overflow-hidden">
-            <div className="relative z-10">
-              <div className="flex justify-between items-center mb-3 md:mb-6">
-                <div>
-                  <p className="text-indigo-100 text-[9px] md:text-xs font-black uppercase tracking-[0.3em] mb-1 md:mb-2 opacity-80">Hiệu suất tổng thể</p>
-                  <p className="text-2xl md:text-4xl font-black">{Math.round(overallProgress)}% <span className="text-indigo-200 text-xs md:text-base font-bold">Hoàn thành</span></p>
-                </div>
-                <div className="text-3xl md:text-5xl font-black opacity-30">#3</div>
+          {/* Compact Progress Card */}
+          <div className="bg-indigo-600 rounded-2xl p-4 md:p-5 shadow-lg shadow-indigo-100/50 text-white relative overflow-hidden">
+            <div className="relative z-10 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div className="shrink-0">
+                <p className="text-indigo-100 text-[8px] md:text-[9px] font-black uppercase tracking-[0.2em] mb-0.5 opacity-80">Hiệu suất tổng thể</p>
+                <p className="text-xl md:text-2xl font-black">{Math.round(overallProgress)}% <span className="text-indigo-200 text-xs font-bold">Hoàn thành</span></p>
               </div>
-              <div className="h-2 md:h-4 bg-indigo-900/20 rounded-full overflow-hidden backdrop-blur-md p-0.5 md:p-1">
+              <div className="flex-grow max-w-md w-full h-2.5 bg-indigo-950/20 rounded-full overflow-hidden backdrop-blur-md p-0.5">
                 <motion.div 
-                   className="h-full bg-white rounded-full shadow-[0_0_20px_rgba(255,255,255,0.6)]"
+                   className="h-full bg-white rounded-full shadow-[0_0_15px_rgba(255,255,255,0.6)]"
                    initial={{ width: 0 }}
                    animate={{ width: `${overallProgress}%` }}
                    transition={{ duration: 1.5, ease: [0.34, 1.56, 0.64, 1] }}
                 />
               </div>
             </div>
-            <div className="absolute -right-16 -bottom-16 w-64 h-64 bg-indigo-500/30 rounded-full blur-[80px]"></div>
-            <div className="absolute -left-10 -top-10 w-40 h-40 bg-white/5 rounded-full blur-[40px]"></div>
+            <div className="absolute -right-16 -bottom-16 w-36 h-36 bg-indigo-500/20 rounded-full blur-[40px]"></div>
           </div>
         </header>
 
         {/* Conditional Content based on viewMode */}
         {viewMode === 'daily' ? (
           <div>
+            {/* Add Goal Section (Pushed to the very top of the content area) */}
+            {loading ? (
+              <div className="py-6 flex flex-col items-center justify-center text-slate-300 gap-3">
+                <div className="w-6 h-6 border-3 border-indigo-100 border-t-indigo-600 rounded-full animate-spin"></div>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-center">Đang tải...</p>
+              </div>
+            ) : currentDailyGoals.length < 3 ? (
+              <form onSubmit={addGoal} className="bg-white p-4 md:p-5 rounded-2xl md:rounded-3xl shadow-lg shadow-slate-200/40 border border-slate-100 mb-4 md:mb-5 transform hover:scale-[1.005] transition-transform duration-300">
+                <h3 className="text-[10px] md:text-xs font-black text-slate-400 uppercase tracking-[0.25em] mb-2.5 flex items-center gap-2">
+                  <Plus className="text-indigo-600 w-3.5 h-3.5 md:w-4 md:h-4" strokeWidth={3} /> Thiết lập Big 3
+                </h3>
+                <div className="flex flex-col sm:flex-row gap-3 items-stretch">
+                  <div className="flex-grow">
+                    <input
+                      type="text"
+                      value={newGoalText}
+                      onChange={(e) => setNewGoalText(e.target.value)}
+                      placeholder="Mục tiêu lớn nhất hôm nay..."
+                      className="w-full bg-slate-50 border-none rounded-xl px-4 py-2.5 md:px-5 md:py-3 text-sm md:text-base font-bold text-slate-900 focus:ring-4 focus:ring-indigo-500/10 transition-all placeholder:text-slate-300"
+                    />
+                  </div>
+                  <div className="flex gap-3 items-center shrink-0">
+                    <div className="flex items-center gap-2 bg-slate-50 px-3.5 py-2.5 md:px-4 md:py-3 rounded-xl text-slate-500 text-xs md:text-sm font-bold border border-slate-100 h-full">
+                      <Percent className="text-indigo-500 w-3.5 h-3.5" />
+                      <input 
+                        type="number" 
+                        value={newGoalWeight}
+                        onChange={(e) => setNewGoalWeight(e.target.value)}
+                        placeholder="Tỷ trọng"
+                        className="bg-transparent border-none focus:ring-0 p-0 text-xs md:text-sm font-bold w-10 text-center"
+                      />
+                      <span className="text-slate-300">%</span>
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={!newGoalText.trim()}
+                      className="flex-grow sm:flex-grow-0 bg-slate-900 text-white px-5 md:px-7 py-2.5 md:py-3 rounded-xl font-black text-xs uppercase tracking-widest hover:bg-indigo-600 transition-all shadow-md disabled:opacity-50 h-full"
+                    >
+                      Bắt đầu
+                    </button>
+                  </div>
+                </div>
+              </form>
+            ) : (
+              <div className="bg-indigo-50/50 border border-indigo-100/50 p-3 md:p-4 rounded-xl md:rounded-2xl mb-4 md:mb-5 flex items-center gap-3 text-indigo-900">
+                <Target className="text-indigo-600 shrink-0 w-4 h-4 md:w-5 md:h-5" />
+                <p className="text-[11px] md:text-xs font-bold leading-relaxed tracking-tight">"Sự tập trung là lời từ chối với hàng nghìn ý tưởng tốt khác." - Hãy hoàn thành 3 mục tiêu này!</p>
+              </div>
+            )}
+
             {/* Date Navigation for Daily View */}
-            <div className="flex items-center justify-between mb-8 bg-white p-3 rounded-2xl border border-slate-100 shadow-sm">
+            <div className="flex items-center justify-between mb-4 bg-white p-2.5 rounded-xl md:rounded-2xl border border-slate-100 shadow-sm">
               <button 
                 onClick={() => {
                   const d = new Date(selectedDate);
                   d.setDate(d.getDate() - 1);
                   setSelectedDate(d.toISOString().split('T')[0]);
                 }}
-                className="p-2 hover:bg-slate-50 rounded-xl text-slate-400 hover:text-indigo-600 transition-all"
+                className="p-1.5 hover:bg-slate-50 rounded-lg text-slate-400 hover:text-indigo-600 transition-all"
               >
-                <ChevronLeft size={20} />
+                <ChevronLeft size={18} />
               </button>
-              <div className="flex items-center gap-3">
-                <CalendarIcon size={18} className="text-indigo-500" />
-                <span className="font-black text-slate-700 tracking-tight">
+              <div className="flex items-center gap-2">
+                <CalendarIcon size={16} className="text-indigo-500" />
+                <span className="font-black text-xs md:text-sm text-slate-700 tracking-tight">
                   {new Date(selectedDate).toLocaleDateString('vi-VN', { day: 'numeric', month: 'long', year: 'numeric' })}
                 </span>
               </div>
@@ -717,59 +764,11 @@ export default function App() {
                   d.setDate(d.getDate() + 1);
                   setSelectedDate(d.toISOString().split('T')[0]);
                 }}
-                className="p-2 hover:bg-slate-50 rounded-xl text-slate-400 hover:text-indigo-600 transition-all"
+                className="p-1.5 hover:bg-slate-50 rounded-lg text-slate-400 hover:text-indigo-600 transition-all"
               >
-                <ChevronRight size={20} />
+                <ChevronRight size={18} />
               </button>
             </div>
-
-            {/* Add Goal Section */}
-            {loading ? (
-           <div className="py-12 md:py-20 flex flex-col items-center justify-center text-slate-300 gap-4">
-              <div className="w-8 h-8 border-4 border-indigo-100 border-t-indigo-600 rounded-full animate-spin"></div>
-              <p className="text-xs md:text-sm font-bold uppercase tracking-widest text-center">Đang tải dữ liệu...</p>
-           </div>
-        ) : currentDailyGoals.length < 3 ? (
-          <form onSubmit={addGoal} className="bg-white p-6 md:p-8 rounded-[2rem] md:rounded-[2.5rem] shadow-xl shadow-slate-200/50 border border-slate-100 mb-8 md:mb-12 transform hover:scale-[1.01] transition-transform duration-500">
-            <h3 className="text-[10px] md:text-xs font-black text-slate-400 uppercase tracking-[0.25em] mb-4 md:mb-6 flex items-center gap-2 md:gap-3">
-              <Plus className="text-indigo-600 w-4 h-4 md:w-[18px] md:h-[18px]" strokeWidth={3} /> Thiết lập Big 3
-            </h3>
-            <div className="space-y-4 md:space-y-6">
-              <input
-                type="text"
-                value={newGoalText}
-                onChange={(e) => setNewGoalText(e.target.value)}
-                placeholder="Mục tiêu lớn nhất hôm nay..."
-                className="w-full bg-slate-50 border-none rounded-xl md:rounded-2xl px-5 py-3.5 md:px-6 md:py-5 text-base md:text-xl font-bold text-slate-900 focus:ring-4 focus:ring-indigo-500/10 transition-all placeholder:text-slate-300"
-              />
-              <div className="flex flex-wrap gap-3 md:gap-4 items-center">
-                <div className="flex items-center gap-2 md:gap-3 bg-slate-50 px-4 py-2 md:px-5 md:py-3 rounded-xl md:rounded-2xl text-slate-500 text-xs md:text-sm font-bold border border-slate-100">
-                  <Percent className="text-indigo-500 w-3.5 h-3.5 md:w-4 md:h-4" />
-                  <input 
-                    type="number" 
-                    value={newGoalWeight}
-                    onChange={(e) => setNewGoalWeight(e.target.value)}
-                    placeholder="Tỷ trọng %"
-                    className="bg-transparent border-none focus:ring-0 p-0 text-xs md:text-sm font-bold w-16"
-                  />
-                  <span className="text-slate-300">%</span>
-                </div>
-                <button
-                  type="submit"
-                  disabled={!newGoalText.trim()}
-                  className="w-full sm:w-auto sm:ml-auto bg-slate-900 text-white px-8 md:px-10 py-3 md:py-4 rounded-xl md:rounded-2xl font-black text-xs md:text-sm uppercase tracking-widest hover:bg-indigo-600 transition-all shadow-xl shadow-indigo-100 disabled:opacity-50"
-                >
-                  Bắt đầu
-                </button>
-              </div>
-            </div>
-          </form>
-        ) : (
-          <div className="bg-indigo-50/50 border-2 border-indigo-100/50 p-5 md:p-6 rounded-[1.5rem] md:rounded-[2rem] mb-8 md:mb-12 flex items-center gap-4 text-indigo-900">
-            <Target className="text-indigo-600 shrink-0 w-5 h-5 md:w-6 md:h-6" />
-            <p className="text-xs md:text-sm font-bold leading-relaxed tracking-tight underline decoration-indigo-200 underline-offset-4">"Sự tập trung là lời từ chối với hàng nghìn ý tưởng tốt khác." - Hãy hoàn thành 3 mục tiêu này!</p>
-          </div>
-        )}
 
         {/* Goals List */}
         <div className="space-y-6 md:space-y-8">
@@ -792,29 +791,123 @@ export default function App() {
               <motion.div 
                 initial={{ opacity: 0, y: -10 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="bg-amber-50/50 border-2 border-amber-100/50 rounded-[2rem] p-6 mb-8"
+                className="bg-amber-50/50 border-2 border-amber-100/50 rounded-2xl p-4 mb-5"
               >
-                <div className="flex items-center gap-3 mb-4">
-                  <AlertCircle className="text-amber-500 w-5 h-5" />
-                  <h3 className="text-sm font-black text-amber-700 uppercase tracking-widest">Mục tiêu tồn đọng ({backlogGoals.length})</h3>
+                <div 
+                  onClick={() => setIsBacklogExpanded(!isBacklogExpanded)}
+                  className="flex items-center justify-between cursor-pointer group"
+                >
+                  <div className="flex items-center gap-2 md:gap-3">
+                    <AlertCircle className="text-amber-500 w-4.5 h-4.5 shrink-0" />
+                    <h3 className="text-[11px] md:text-xs font-black text-amber-700 uppercase tracking-widest flex items-center gap-1.5 select-none">
+                      Mục tiêu tồn đọng 
+                      <span className="bg-amber-100/80 text-amber-700 px-2 py-0.5 rounded-full text-[9px] font-black">
+                        {backlogGoals.length}
+                      </span>
+                    </h3>
+                  </div>
+                  <div className="text-amber-600 group-hover:text-amber-700 transition-colors p-1">
+                    {isBacklogExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                  </div>
                 </div>
-                <div className="space-y-3">
-                  {backlogGoals.map(goal => (
-                    <div key={goal.id} className="flex items-center justify-between bg-white/60 p-4 rounded-2xl border border-amber-100 shadow-sm">
-                      <div className="flex items-center gap-3 overflow-hidden">
-                        <div className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
-                        <span className="text-sm font-bold text-slate-700 truncate">{goal.text}</span>
-                        <span className="text-[10px] bg-amber-100 text-amber-600 px-2 py-0.5 rounded-full font-bold shrink-0">{goal.date}</span>
-                      </div>
-                      <button 
-                        onClick={() => moveGoalToCurrentDate(goal.id)}
-                        className="flex items-center gap-2 bg-amber-500 text-white px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider hover:bg-amber-600 transition-all shadow-sm shadow-amber-200"
-                      >
-                        <CalendarIcon size={12} /> Chuyển sang hôm nay
-                      </button>
-                    </div>
-                  ))}
-                </div>
+
+                <AnimatePresence>
+                  {isBacklogExpanded && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0, marginTop: 0 }}
+                      animate={{ height: "auto", opacity: 1, marginTop: 12 }}
+                      exit={{ height: 0, opacity: 0, marginTop: 0 }}
+                      className="overflow-hidden space-y-3"
+                    >
+                      {backlogGoals.map(goal => {
+                        const isExpanded = expandedGoalId === goal.id;
+                        return (
+                          <div key={goal.id} className="bg-white/60 rounded-xl border border-amber-100 shadow-sm overflow-hidden transition-all">
+                            <div 
+                              onClick={() => setExpandedGoalId(isExpanded ? null : goal.id)}
+                              className="flex items-center justify-between p-3 cursor-pointer hover:bg-amber-50/30 transition-colors"
+                            >
+                              <div className="flex items-center gap-2 overflow-hidden flex-grow min-w-0 pr-2">
+                                <div className="flex flex-col min-w-0">
+                                  <span className="text-xs md:text-sm font-bold text-slate-700 truncate">{goal.text}</span>
+                                  <div className="flex items-center gap-2 mt-0.5">
+                                    <span className="text-[8px] bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded-full font-bold shrink-0">{goal.date}</span>
+                                    {goal.subtasks && goal.subtasks.length > 0 && (
+                                      <span className="text-[8px] text-slate-400 font-bold">
+                                        {goal.subtasks.filter((s: any) => s.completed).length}/{goal.subtasks.length} hạng mục
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                              
+                              <div className="flex items-center gap-2 shrink-0">
+                                <button 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    moveGoalToCurrentDate(goal.id);
+                                  }}
+                                  className="flex items-center gap-1 bg-amber-500 text-white px-2 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider hover:bg-amber-600 transition-all shadow-sm shadow-amber-200 shrink-0"
+                                  title="Chuyển sang hôm nay"
+                                >
+                                  <CalendarIcon size={10} />
+                                  <span className="hidden sm:inline">Chuyển sang hôm nay</span>
+                                  <span className="sm:hidden">Hôm nay</span>
+                                </button>
+                                <div className="text-slate-400 p-0.5">
+                                  {isExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Expanded details */}
+                            <AnimatePresence>
+                              {isExpanded && (
+                                <motion.div 
+                                  initial={{ height: 0, opacity: 0 }}
+                                  animate={{ height: "auto", opacity: 1 }}
+                                  exit={{ height: 0, opacity: 0 }}
+                                  className="bg-amber-50/20 border-t border-amber-100/50 p-3 space-y-2.5"
+                                >
+                                  {goal.deadline && (
+                                    <div className="flex items-center gap-1.5 text-[8px] font-black text-amber-600 uppercase tracking-widest w-fit bg-amber-100/30 px-2 py-0.5 rounded-full">
+                                      <Clock size={9} />
+                                      <span>Hạn chót: {new Date(goal.deadline).toLocaleString('vi-VN', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                                    </div>
+                                  )}
+                                  
+                                  {goal.subtasks && goal.subtasks.length > 0 ? (
+                                    <div className="space-y-2">
+                                      <h4 className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Danh sách hạng mục:</h4>
+                                      {goal.subtasks.map((sub: any) => (
+                                        <div key={sub.id} className="flex items-center gap-2.5 bg-white/80 p-2 rounded-lg border border-slate-100 text-[11px]">
+                                          <button 
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              toggleSubtask(goal.id, sub.id, sub.completed);
+                                            }} 
+                                            className={`transform active:scale-75 transition-all shrink-0 ${sub.completed ? "text-emerald-500" : "text-slate-300 hover:text-emerald-400"}`}
+                                          >
+                                            {sub.completed ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Circle className="w-3.5 h-3.5" />}
+                                          </button>
+                                          <span className={`font-bold ${sub.completed ? "text-slate-400 line-through" : "text-slate-700"}`}>
+                                            {sub.text}
+                                          </span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <p className="text-[9px] text-slate-400 italic">Mục tiêu này chưa có hạng mục chi tiết.</p>
+                                  )}
+                                </motion.div>
+                              )}
+                            </AnimatePresence>
+                          </div>
+                        );
+                      })}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </motion.div>
             );
           })()}
@@ -1390,48 +1483,48 @@ export default function App() {
           <motion.div 
             initial={{ opacity: 0, scale: 0.98 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="bg-white rounded-[2.5rem] p-8 md:p-10 border border-slate-100 shadow-2xl shadow-slate-200/40"
+            className="bg-white rounded-2xl p-4 md:p-6 border border-slate-100 shadow-xl shadow-slate-200/40"
           >
-            <div className="flex items-center justify-between mb-10">
-              <div className="flex items-center gap-4">
-                <div className="bg-indigo-50 text-indigo-600 p-3 rounded-2xl">
-                  <Calendar size={24} />
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-3">
+                <div className="bg-indigo-50 text-indigo-600 p-2 rounded-xl">
+                  <Calendar size={20} />
                 </div>
                 <div>
-                  <h3 className="text-2xl font-black text-slate-900 tracking-tight">Lịch trình</h3>
-                  <p className="text-slate-400 font-bold text-sm uppercase tracking-widest">
+                  <h3 className="text-lg md:text-xl font-extrabold text-slate-900 tracking-tight">Lịch trình</h3>
+                  <p className="text-slate-400 font-bold text-xs uppercase tracking-widest">
                     {calendarMonth.toLocaleDateString('vi-VN', { month: 'long', year: 'numeric' })}
                   </p>
                 </div>
               </div>
-              <div className="flex gap-2">
+              <div className="flex gap-1.5">
                 <button 
                   onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))}
-                  className="p-2 hover:bg-slate-50 rounded-xl border border-slate-100 text-slate-400 transition-all"
+                  className="p-1.5 hover:bg-slate-50 rounded-lg border border-slate-100 text-slate-400 transition-all"
                 >
-                  <ChevronLeft size={20} />
+                  <ChevronLeft size={16} />
                 </button>
                 <button 
                    onClick={() => setCalendarMonth(new Date())}
-                   className="px-4 py-2 hover:bg-slate-50 rounded-xl border border-slate-100 text-[10px] font-black uppercase tracking-widest text-slate-400 transition-all"
+                   className="px-3 py-1.5 hover:bg-slate-50 rounded-lg border border-slate-100 text-[9px] font-black uppercase tracking-widest text-slate-400 transition-all"
                 >
                   Hôm nay
                 </button>
                 <button 
                   onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1))}
-                  className="p-2 hover:bg-slate-50 rounded-xl border border-slate-100 text-slate-400 transition-all"
+                  className="p-1.5 hover:bg-slate-50 rounded-lg border border-slate-100 text-slate-400 transition-all"
                 >
-                  <ChevronRight size={20} />
+                  <ChevronRight size={16} />
                 </button>
               </div>
             </div>
 
-            <div className="grid grid-cols-7 mb-4">
+            <div className="grid grid-cols-7 mb-2">
               {['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'].map(d => (
-                <div key={d} className="text-center text-[10px] font-black text-slate-300 uppercase tracking-widest mb-2">{d}</div>
+                <div key={d} className="text-center text-[9px] font-black text-slate-300 uppercase tracking-widest mb-1">{d}</div>
               ))}
               {Array.from({ length: (new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), 1).getDay() || 7) - 1 }).map((_, i) => (
-                <div key={`empty-${i}`} className="h-16 md:h-24"></div>
+                <div key={`empty-${i}`} className="h-10 md:h-14"></div>
               ))}
               {Array.from({ length: new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 0).getDate() }).map((_, i) => {
                 const day = i + 1;
@@ -1447,35 +1540,35 @@ export default function App() {
                       setSelectedDate(dateStr);
                       setViewMode('daily');
                     }}
-                    className={`h-16 md:h-24 border border-slate-50 relative flex flex-col items-center justify-center transition-all group overflow-hidden ${
+                    className={`h-10 md:h-14 border border-slate-50 relative flex flex-col items-center justify-center transition-all group overflow-hidden ${
                       isSelected ? "bg-indigo-50/50" : "hover:bg-slate-50"
                     }`}
                   >
-                    <span className={`text-base md:text-xl font-black transition-all ${
+                    <span className={`text-xs md:text-sm font-black transition-all ${
                       isToday ? "text-indigo-600" : isSelected ? "text-slate-900" : "text-slate-400 group-hover:text-slate-600"
                     }`}>
                       {day}
                     </span>
-                    {isToday && <div className="w-1.5 h-1.5 bg-indigo-600 rounded-full mt-1"></div>}
-                    <div className="mt-2 flex gap-0.5 md:gap-1">
+                    {isToday && <div className="w-1 h-1 bg-indigo-600 rounded-full mt-0.5"></div>}
+                    <div className="mt-1 flex gap-0.5">
                       {dayGoals.map((g, idx) => (
-                        <div key={idx} className={`w-1.5 h-1.5 md:w-2 md:h-2 rounded-full ${g.completed ? "bg-emerald-500" : "bg-indigo-300"}`}></div>
+                        <div key={idx} className={`w-1 h-1 rounded-full ${g.completed ? "bg-emerald-500" : "bg-indigo-300"}`}></div>
                       ))}
                     </div>
-                    {isSelected && <div className="absolute left-0 top-0 w-1 h-full bg-indigo-600"></div>}
+                    {isSelected && <div className="absolute left-0 top-0 w-0.5 h-full bg-indigo-600"></div>}
                   </button>
                 );
               })}
             </div>
             
-            <div className="mt-8 pt-8 border-t border-slate-50 flex items-center justify-between text-xs font-bold text-slate-400 uppercase tracking-widest">
-              <div className="flex gap-4">
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 bg-indigo-300 rounded-full"></div>
+            <div className="mt-4 pt-4 border-t border-slate-50 flex items-center justify-between text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+              <div className="flex gap-3">
+                <div className="flex items-center gap-1.5">
+                  <div className="w-1.5 h-1.5 bg-indigo-300 rounded-full"></div>
                   <span>Đang thực hiện</span>
                 </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 bg-emerald-500 rounded-full"></div>
+                <div className="flex items-center gap-1.5">
+                  <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full"></div>
                   <span>Đã xong</span>
                 </div>
               </div>
