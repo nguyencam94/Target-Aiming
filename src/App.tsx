@@ -219,6 +219,8 @@ export default function App() {
       orderBy("createdAt", "desc")
     );
 
+    const subtaskUnsubscribes: Record<string, () => void> = {};
+
     const unsubscribeGoals = onSnapshot(q, (snapshot) => {
       const goalsList: Goal[] = [];
       snapshot.forEach((goalDoc) => {
@@ -228,21 +230,32 @@ export default function App() {
       setGoals(goalsList);
       setLoading(false);
 
-      // Manage subtask listeners
+      // Clean up subtask listeners for removed goals
+      const currentGoalIds = new Set(goalsList.map(g => g.id));
+      Object.keys(subtaskUnsubscribes).forEach((goalId) => {
+        if (!currentGoalIds.has(goalId)) {
+          subtaskUnsubscribes[goalId]();
+          delete subtaskUnsubscribes[goalId];
+        }
+      });
+
+      // Attach subtask listeners for new goals
       goalsList.forEach((goal) => {
-        const subQ = query(
-          collection(db, `goals/${goal.id}/subtasks`), 
-          where("userId", "==", user.uid),
-          orderBy("createdAt", "asc")
-        );
-        onSnapshot(subQ, (subSnapshot) => {
-          const subtasks: SubTask[] = [];
-          subSnapshot.forEach(subDoc => {
-            subtasks.push({ id: subDoc.id, ...subDoc.data() } as SubTask);
-          });
-          
-          setGoals(prev => prev.map(g => g.id === goal.id ? { ...g, subtasks } : g));
-        }, (error) => handleFirestoreError(error, 'list', `goals/${goal.id}/subtasks`));
+        if (!subtaskUnsubscribes[goal.id]) {
+          const subQ = query(
+            collection(db, `goals/${goal.id}/subtasks`), 
+            where("userId", "==", user.uid),
+            orderBy("createdAt", "asc")
+          );
+          subtaskUnsubscribes[goal.id] = onSnapshot(subQ, (subSnapshot) => {
+            const subtasks: SubTask[] = [];
+            subSnapshot.forEach(subDoc => {
+              subtasks.push({ id: subDoc.id, ...subDoc.data() } as SubTask);
+            });
+            
+            setGoals(prev => prev.map(g => g.id === goal.id ? { ...g, subtasks } : g));
+          }, (error) => handleFirestoreError(error, 'list', `goals/${goal.id}/subtasks`));
+        }
       });
     }, (error) => handleFirestoreError(error, 'list', 'goals'));
 
@@ -262,9 +275,28 @@ export default function App() {
 
     return () => {
       unsubscribeGoals();
+      Object.values(subtaskUnsubscribes).forEach(unsub => unsub());
       unsubscribeSchedules();
     };
   }, [user]);
+
+  // Automatically complete parent goal when all subtasks are completed
+  useEffect(() => {
+    if (!user || goals.length === 0) return;
+
+    goals.forEach(async (goal) => {
+      if (goal.subtasks && goal.subtasks.length > 0 && !goal.completed) {
+        const allCompleted = goal.subtasks.every(s => s.completed);
+        if (allCompleted) {
+          try {
+            await updateDoc(doc(db, "goals", goal.id), { completed: true });
+          } catch (err) {
+            console.error("Failed to auto-complete goal", goal.id, err);
+          }
+        }
+      }
+    });
+  }, [goals, user]);
 
   const login = () => signInWithPopup(auth, googleProvider);
   const logout = () => signOut(auth);
@@ -528,18 +560,145 @@ export default function App() {
     return totalWeights === 0 ? 0 : (completedWeights / totalWeights) * 100;
   };
 
-  const calculateOverallProgress = () => {
-    const dailyGoals = goals.filter(g => isGoalInDate(g, selectedDate));
+  const calculateDayScore = (dateStr: string) => {
+    const dailyGoals = goals.filter(g => isGoalInDate(g, dateStr));
     if (dailyGoals.length === 0) return 0;
-    const totalGoalWeights = dailyGoals.reduce((sum, g) => sum + (g.weight || 1), 0);
-    const weightedProgress = dailyGoals.reduce((sum, g) => {
+    const score = dailyGoals.reduce((sum, g) => {
       const goalProgress = calculateGoalProgress(g);
-      return sum + (goalProgress * (g.weight || 1) / 100);
+      return sum + (goalProgress / 100 * (g.weight || 0));
     }, 0);
-    return totalGoalWeights === 0 ? 0 : (weightedProgress / totalGoalWeights) * 100;
+    return Math.min(100, Math.round(score));
+  };
+
+  const calculateOverallProgress = () => {
+    return calculateDayScore(selectedDate);
+  };
+
+  const getPeriodDays = () => {
+    const now = new Date();
+    const days: string[] = [];
+
+    if (statsPeriod === 'day') {
+      days.push(now.toISOString().split('T')[0]);
+      return days;
+    }
+
+    if (statsPeriod === 'week') {
+      const day = now.getDay();
+      const diffToMonday = now.getDate() - day + (day === 0 ? -6 : 1);
+      const start = new Date(now);
+      start.setDate(diffToMonday);
+      start.setHours(0, 0, 0, 0);
+      
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(start);
+        d.setDate(start.getDate() + i);
+        days.push(d.toISOString().split('T')[0]);
+      }
+      return days;
+    }
+
+    if (statsPeriod === 'month') {
+      const year = now.getFullYear();
+      const month = now.getMonth();
+      const numDays = new Date(year, month + 1, 0).getDate();
+      for (let i = 1; i <= numDays; i++) {
+        const d = new Date(year, month, i);
+        days.push(d.toISOString().split('T')[0]);
+      }
+      return days;
+    }
+
+    if (statsPeriod === 'year') {
+      const year = now.getFullYear();
+      const startOfYear = new Date(year, 0, 1);
+      const isLeap = (year % 4 === 0 && year % 100 !== 0) || (year % 400 === 0);
+      const numDays = isLeap ? 366 : 365;
+      for (let i = 0; i < numDays; i++) {
+        const d = new Date(startOfYear);
+        d.setDate(startOfYear.getDate() + i);
+        days.push(d.toISOString().split('T')[0]);
+      }
+      return days;
+    }
+
+    return days;
+  };
+
+  const getBarChartData = () => {
+    const periodDays = getPeriodDays();
+    
+    if (statsPeriod === 'day') {
+      const todayGoals = getFilteredGoals();
+      return todayGoals.map(g => ({
+        name: g.text.length > 12 ? g.text.substring(0, 10) + '...' : g.text,
+        'Đạt được': Math.round(calculateGoalProgress(g) / 100 * g.weight),
+        'Tối đa': g.weight
+      }));
+    }
+    
+    if (statsPeriod === 'week') {
+      return periodDays.map(d => {
+        const dateObj = new Date(d);
+        const dayLabel = dateObj.toLocaleDateString('vi-VN', { weekday: 'short' });
+        return {
+          name: dayLabel,
+          'Điểm đạt được': calculateDayScore(d),
+          'Điểm tối đa': 100
+        };
+      });
+    }
+    
+    if (statsPeriod === 'month') {
+      return periodDays.map(d => {
+        const dateObj = new Date(d);
+        const dayLabel = `${dateObj.getDate()}`;
+        return {
+          name: dayLabel,
+          'Điểm đạt được': calculateDayScore(d),
+          'Điểm tối đa': 100
+        };
+      });
+    }
+    
+    if (statsPeriod === 'year') {
+      const now = new Date();
+      const year = now.getFullYear();
+      const monthData = [];
+      for (let m = 0; m < 12; m++) {
+        const dateObj = new Date(year, m, 1);
+        const monthLabel = dateObj.toLocaleDateString('vi-VN', { month: 'short' });
+        const numDays = new Date(year, m + 1, 0).getDate();
+        let monthScore = 0;
+        
+        for (let i = 1; i <= numDays; i++) {
+          const dStr = `${year}-${String(m + 1).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
+          monthScore += calculateDayScore(dStr);
+        }
+        
+        const maxMonthScore = numDays * 100;
+        monthData.push({
+          name: monthLabel,
+          'Điểm đạt được': monthScore,
+          'Điểm tối đa': maxMonthScore
+        });
+      }
+      return monthData;
+    }
+    
+    return [];
   };
 
   const overallProgress = calculateOverallProgress();
+
+  const periodDays = getPeriodDays();
+  const totalScore = periodDays.reduce((sum, d) => sum + calculateDayScore(d), 0);
+  const maxScore = periodDays.length * 100;
+  const remainingScore = Math.max(0, maxScore - totalScore);
+  const pieData = [
+    { name: 'Điểm đạt được', value: totalScore },
+    { name: 'Điểm chưa đạt', value: remainingScore }
+  ];
 
   const currentDailyGoals = goals.filter(g => isGoalInDate(g, selectedDate));
   const currentDailySchedules = schedules.filter(s => s.date === selectedDate);
@@ -589,23 +748,96 @@ export default function App() {
 
   if (!user) {
     return (
-      <div className="min-h-screen bg-[#f8fafc] flex items-center justify-center p-6 font-sans">
-        <div className="max-w-md w-full bg-white rounded-[2.5rem] p-10 shadow-2xl shadow-indigo-100 text-center border border-slate-100">
-          <div className="w-20 h-20 bg-indigo-600 rounded-3xl flex items-center justify-center mx-auto mb-8 shadow-xl shadow-indigo-200">
-            <Target className="text-white" size={40} />
+      <div className="min-h-screen bg-gradient-to-br from-indigo-50/80 via-sky-50/60 to-amber-50/80 flex items-center justify-center p-6 font-sans relative overflow-hidden">
+        {/* Background SVG Grid Pattern */}
+        <svg className="absolute inset-0 w-full h-full opacity-30 pointer-events-none" xmlns="http://www.w3.org/2000/svg" width="100%" height="100%">
+          <defs>
+            <pattern id="dot-pattern" width="24" height="24" patternUnits="userSpaceOnUse">
+              <circle cx="2" cy="2" r="1.5" className="fill-indigo-300" />
+            </pattern>
+            <linearGradient id="svg-grad-1" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stopColor="#6366f1" stopOpacity="0.15" />
+              <stop offset="100%" stopColor="#06b6d4" stopOpacity="0.05" />
+            </linearGradient>
+          </defs>
+          <rect width="100%" height="100%" fill="url(#dot-pattern)" />
+        </svg>
+
+        {/* Ambient SVG Decorative Floating Shapes */}
+        <div className="absolute top-10 left-10 w-72 h-72 bg-indigo-400/20 rounded-full blur-[90px] pointer-events-none animate-pulse"></div>
+        <div className="absolute bottom-10 right-10 w-80 h-80 bg-amber-300/25 rounded-full blur-[100px] pointer-events-none"></div>
+        <div className="absolute top-1/3 right-1/4 w-60 h-60 bg-sky-300/20 rounded-full blur-[80px] pointer-events-none"></div>
+
+        {/* Floating Decorative SVG Accent Items */}
+        <motion.div 
+          initial={{ y: -10, opacity: 0 }} 
+          animate={{ y: [0, -12, 0], opacity: 1 }} 
+          transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
+          className="absolute top-16 left-1/4 hidden md:flex items-center gap-2 bg-white/80 backdrop-blur-md px-3.5 py-2 rounded-2xl shadow-lg border border-indigo-100/60 text-xs font-black text-indigo-900 pointer-events-none"
+        >
+          <span className="text-base">🎯</span> Big 3 Goals
+        </motion.div>
+
+        <motion.div 
+          initial={{ y: 10, opacity: 0 }} 
+          animate={{ y: [0, 12, 0], opacity: 1 }} 
+          transition={{ duration: 5, repeat: Infinity, ease: "easeInOut", delay: 1 }}
+          className="absolute bottom-20 right-1/4 hidden md:flex items-center gap-2 bg-white/80 backdrop-blur-md px-3.5 py-2 rounded-2xl shadow-lg border border-emerald-100/60 text-xs font-black text-emerald-900 pointer-events-none"
+        >
+          <span className="text-base">⚡</span> 100% Tập trung
+        </motion.div>
+
+        {/* Decorative Wave SVG */}
+        <svg className="absolute bottom-0 left-0 w-full opacity-20 pointer-events-none" viewBox="0 0 1440 320" xmlns="http://www.w3.org/2000/svg">
+          <path fill="#6366f1" fillOpacity="1" d="M0,192L48,197.3C96,203,192,213,288,192C384,171,480,117,576,112C672,107,768,149,864,176C960,203,1056,213,1152,197.3C1248,181,1344,139,1392,117.3L1440,96L1440,320L1392,320C1344,320,1248,320,1152,320C1056,320,960,320,864,320C768,320,672,320,576,320C480,320,384,320,288,320C192,320,96,320,48,320L0,320Z"></path>
+        </svg>
+
+        {/* Login Card */}
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.95, y: 15 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+          className="max-w-md w-full bg-white/90 backdrop-blur-xl rounded-[2.5rem] p-8 md:p-10 shadow-2xl shadow-indigo-500/10 text-center border border-white/80 relative z-10"
+        >
+          {/* Badge */}
+          <div className="inline-flex items-center gap-1.5 bg-gradient-to-r from-amber-100/80 via-indigo-100/80 to-emerald-100/80 px-3.5 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest text-indigo-900 mb-6 border border-indigo-200/50 shadow-sm">
+            <Sparkles className="w-3.5 h-3.5 text-amber-500" /> Năng lượng mới cho mỗi ngày
           </div>
-          <h1 className="text-3xl font-extrabold text-slate-900 mb-4 tracking-tight">DayFlow</h1>
-          <p className="text-slate-500 mb-10 leading-relaxed font-medium">
-            Tập trung vào 3 mục tiêu quan trọng nhất mỗi ngày. Đăng nhập để bắt đầu hành trình của bạn.
+
+          {/* Logo Icon with SVG decorative ring */}
+          <div className="relative w-20 h-20 mx-auto mb-6">
+            <div className="absolute -inset-2 bg-gradient-to-r from-indigo-500 via-sky-400 to-emerald-400 rounded-[2rem] blur-md opacity-60 animate-pulse"></div>
+            <div className="relative w-20 h-20 bg-gradient-to-tr from-indigo-600 via-indigo-500 to-sky-500 rounded-[1.8rem] flex items-center justify-center shadow-xl shadow-indigo-500/30">
+              <Target className="text-white transform hover:rotate-12 transition-transform" size={40} />
+            </div>
+          </div>
+
+          <h1 className="text-3xl md:text-4xl font-extrabold text-slate-900 mb-3 tracking-tight bg-gradient-to-r from-indigo-900 via-indigo-700 to-slate-900 bg-clip-text text-transparent">
+            DayFlow
+          </h1>
+          <p className="text-slate-600 mb-8 leading-relaxed text-sm md:text-base font-medium px-2">
+            Tập trung vào <span className="font-extrabold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md">3 mục tiêu quan trọng nhất</span> mỗi ngày. Bắt đầu hành trình chinh phục ngay bây giờ!
           </p>
+
+          {/* Login Button with Google Logo */}
           <button 
             onClick={login}
-            className="w-full bg-slate-900 text-white py-4 rounded-2xl font-bold flex items-center justify-center gap-3 hover:bg-slate-800 transition-all shadow-xl shadow-slate-200"
+            className="w-full bg-gradient-to-r from-indigo-600 via-indigo-600 to-sky-600 text-white py-4 px-6 rounded-2xl font-black text-sm uppercase tracking-wider flex items-center justify-center gap-3 hover:from-indigo-700 hover:to-sky-700 hover:scale-[1.02] active:scale-[0.98] transition-all duration-200 shadow-xl shadow-indigo-500/25 cursor-pointer group"
           >
-            <LogIn size={20} />
-            Đăng nhập với Google
+            <svg className="w-5 h-5 bg-white p-0.5 rounded-full shrink-0 group-hover:scale-110 transition-transform" viewBox="0 0 24 24">
+              <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+              <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+              <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
+              <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
+            </svg>
+            <span className="[text-shadow:_0_1px_2px_rgba(0,0,0,0.2)]">Đăng nhập với Google</span>
           </button>
-        </div>
+
+          <p className="mt-6 text-[11px] text-slate-400 font-semibold flex items-center justify-center gap-1.5">
+            <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping"></span>
+            Đồng bộ dữ liệu an toàn trên đám mây
+          </p>
+        </motion.div>
       </div>
     );
   }
@@ -671,8 +903,8 @@ export default function App() {
           <div className="bg-indigo-600 rounded-2xl p-4 md:p-5 shadow-lg shadow-indigo-100/50 text-white relative overflow-hidden">
             <div className="relative z-10 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div className="shrink-0">
-                <p className="text-indigo-100 text-[8px] md:text-[9px] font-black uppercase tracking-[0.2em] mb-0.5 opacity-80">Hiệu suất tổng thể</p>
-                <p className="text-xl md:text-2xl font-black">{Math.round(overallProgress)}% <span className="text-indigo-200 text-xs font-bold">Hoàn thành</span></p>
+                <p className="text-indigo-100 text-[8px] md:text-[9px] font-black uppercase tracking-[0.2em] mb-0.5 opacity-80">Điểm số trong ngày</p>
+                <p className="text-xl md:text-2xl font-black">{Math.round(overallProgress)}/100 <span className="text-indigo-200 text-xs font-bold">Điểm đạt được</span></p>
               </div>
               <div className="flex-grow max-w-md w-full h-2.5 bg-indigo-950/20 rounded-full overflow-hidden backdrop-blur-md p-0.5">
                 <motion.div 
@@ -708,27 +940,27 @@ export default function App() {
                       value={newGoalText}
                       onChange={(e) => setNewGoalText(e.target.value)}
                       placeholder="Mục tiêu lớn nhất hôm nay..."
-                      className="w-full bg-slate-50 border-none rounded-xl px-4 py-2.5 md:px-5 md:py-3 text-sm md:text-base font-bold text-slate-900 focus:ring-4 focus:ring-indigo-500/10 transition-all placeholder:text-slate-300"
+                      className="w-full bg-slate-50 border-2 border-indigo-100/70 rounded-xl px-4 py-3 md:px-5 md:py-4 text-sm md:text-base font-bold text-slate-900 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 shadow-[0_0_10px_rgba(99,102,241,0.05)] focus:shadow-[0_0_20px_rgba(99,102,241,0.25)] transition-all placeholder:text-slate-300 outline-none"
                     />
                   </div>
                   <div className="flex gap-3 items-center shrink-0">
-                    <div className="flex items-center gap-2 bg-slate-50 px-3.5 py-2.5 md:px-4 md:py-3 rounded-xl text-slate-500 text-xs md:text-sm font-bold border border-slate-100 h-full">
-                      <Percent className="text-indigo-500 w-3.5 h-3.5" />
+                    <div className="flex items-center gap-2 bg-slate-50 px-4 py-3 md:px-5 md:py-4 rounded-xl text-slate-500 text-xs md:text-sm font-bold border-2 border-slate-100 focus-within:border-indigo-500 focus-within:shadow-[0_0_15px_rgba(99,102,241,0.2)] focus-within:bg-white transition-all h-full">
+                      <Target className="text-indigo-500 w-3.5 h-3.5" />
                       <input 
                         type="number" 
                         value={newGoalWeight}
                         onChange={(e) => setNewGoalWeight(e.target.value)}
-                        placeholder="Tỷ trọng"
-                        className="bg-transparent border-none focus:ring-0 p-0 text-xs md:text-sm font-bold w-10 text-center"
+                        placeholder="Điểm"
+                        className="bg-transparent border-none focus:ring-0 p-0 text-xs md:text-sm font-bold w-10 text-center outline-none"
                       />
-                      <span className="text-slate-300">%</span>
+                      <span className="text-slate-500 font-bold text-xs">điểm</span>
                     </div>
                     <button
                       type="submit"
                       disabled={!newGoalText.trim()}
-                      className="flex-grow sm:flex-grow-0 flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-500 via-teal-500 to-emerald-600 text-white px-5 md:px-7 py-2.5 md:py-3 rounded-xl font-black text-xs uppercase tracking-widest hover:from-emerald-600 hover:to-teal-600 hover:scale-105 active:scale-95 transition-all duration-200 shadow-lg shadow-emerald-500/30 hover:shadow-emerald-500/50 disabled:opacity-50 disabled:hover:scale-100 disabled:shadow-none h-full group cursor-pointer"
+                      className="flex-grow sm:flex-grow-0 flex items-center justify-center gap-2 bg-[#03ad9f] text-white px-5 md:px-7 py-3 md:py-4 rounded-xl font-black text-xs uppercase tracking-widest hover:bg-[#028f83] hover:scale-105 active:scale-95 transition-all duration-200 shadow-lg shadow-[#03ad9f]/30 hover:shadow-[#03ad9f]/50 border border-[#028f83]/30 disabled:opacity-50 disabled:hover:scale-100 disabled:shadow-none h-full group cursor-pointer"
                     >
-                      <Sparkles className="w-3.5 h-3.5 text-emerald-100 group-hover:rotate-12 transition-transform" />
+                      <Sparkles className="w-3.5 h-3.5 text-teal-100 group-hover:rotate-12 transition-transform" />
                       <span className="[text-shadow:_0_1px_2px_rgba(0,0,0,0.3)]">Bắt đầu</span>
                     </button>
                   </div>
@@ -999,14 +1231,14 @@ export default function App() {
                                 />
                               </div>
                               <div className="flex items-center gap-2 bg-slate-50 px-3 py-1.5 rounded-xl text-slate-500 text-[10px] md:text-xs font-bold border border-slate-100 w-fit">
-                                <Percent size={12} className="text-indigo-500" />
+                                <Target size={12} className="text-indigo-500" />
                                 <input 
                                   type="number" 
                                   value={editGoalWeight}
                                   onChange={(e) => setEditGoalWeight(e.target.value)}
                                   className="bg-transparent border-none focus:ring-0 p-0 text-[10px] md:text-xs font-bold w-12"
                                 />
-                                <span>%</span>
+                                <span>điểm</span>
                               </div>
                             </div>
                             <div className="flex gap-2">
@@ -1384,9 +1616,9 @@ export default function App() {
               <div className="flex items-center justify-between mb-10">
                 <div>
                   <h3 className="text-2xl font-black text-slate-900 tracking-tight mb-2">
-                    Hiệu suất {statsPeriod === 'day' ? 'Hôm nay' : statsPeriod === 'week' ? 'Trong tuần' : statsPeriod === 'month' ? 'Trong tháng' : 'Trong năm'}
+                    Điểm số {statsPeriod === 'day' ? 'Hôm nay' : statsPeriod === 'week' ? 'Trong tuần' : statsPeriod === 'month' ? 'Trong tháng' : 'Trong năm'}
                   </h3>
-                  <p className="text-slate-400 font-bold text-sm uppercase tracking-widest">Dựa trên tỷ trọng công việc</p>
+                  <p className="text-slate-400 font-bold text-sm uppercase tracking-widest">Dựa trên điểm số tích lũy</p>
                 </div>
                 <div className="bg-indigo-50 text-indigo-600 p-4 rounded-3xl">
                   <BarChart2 size={32} />
@@ -1398,7 +1630,7 @@ export default function App() {
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
                       <Pie
-                        data={getFilteredGoals().length > 0 ? getFilteredGoals().map(g => ({ name: g.text, value: g.weight || 1 })) : [{ name: 'Không có dữ liệu', value: 1 }]}
+                        data={pieData}
                         cx="50%"
                         cy="50%"
                         innerRadius={60}
@@ -1406,23 +1638,17 @@ export default function App() {
                         paddingAngle={5}
                         dataKey="value"
                       >
-                        {getFilteredGoals().length > 0 ? getFilteredGoals().map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={[ '#4F46E5', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6' ][index % 5]} stroke="none" />
-                        )) : <Cell fill="#F1F5F9" stroke="none" />}
+                        <Cell fill="#03ad9f" stroke="none" />
+                        <Cell fill="#F1F5F9" stroke="none" />
                       </Pie>
-                      <Tooltip />
+                      <Tooltip formatter={(value) => [`${value} điểm`]} />
                     </PieChart>
                   </ResponsiveContainer>
                   <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none text-center">
-                    <span className="text-3xl font-black text-slate-900">
-                      {getFilteredGoals().length > 0 
-                        ? Math.round(
-                            getFilteredGoals().reduce((acc, goal) => acc + (calculateGoalProgress(goal) * (goal.weight / 100)), 0) / 
-                            (getFilteredGoals().reduce((acc, goal) => acc + goal.weight, 0) / 100 || 1)
-                          ) 
-                        : 0}%
+                    <span className="text-2xl md:text-3xl font-black text-slate-900">
+                      {totalScore}/{maxScore}
                     </span>
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Trung bình</span>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Điểm số</span>
                   </div>
                 </div>
 
@@ -1443,7 +1669,7 @@ export default function App() {
                         ></div>
                       </div>
                       <div className="flex justify-between text-[10px] font-bold text-slate-300 uppercase tracking-widest">
-                        <span>Tỷ trọng: {goal.weight}%</span>
+                        <span>Điểm số: {goal.weight} điểm</span>
                         <span>{new Date(goal.createdAt instanceof Timestamp ? goal.createdAt.toDate() : goal.createdAt).toLocaleDateString()}</span>
                       </div>
                     </div>
@@ -1460,20 +1686,27 @@ export default function App() {
             <div className="bg-indigo-900 rounded-[2.5rem] p-8 md:p-10 text-white relative overflow-hidden">
                <div className="relative z-10">
                  <h4 className="text-lg font-black tracking-tight mb-6 flex items-center gap-3 text-indigo-200">
-                   <Target size={20} /> Phân tích hoàn thành ({getFilteredGoals().length} mục tiêu)
+                   <Target size={20} /> Biểu đồ điểm số ({statsPeriod === 'day' ? 'Hôm nay' : statsPeriod === 'week' ? 'Tuần này' : statsPeriod === 'month' ? 'Tháng này' : 'Năm nay'})
                  </h4>
                  <div className="h-64">
                    <ResponsiveContainer width="100%" height="100%">
-                     <BarChart data={getFilteredGoals().map(g => ({
-                       name: g.text.length > 10 ? g.text.substring(0, 8) + '...' : g.text,
-                       'Đã hoàn thành': Math.round(calculateGoalProgress(g)),
-                       'Chưa hoàn thành': 100 - Math.round(calculateGoalProgress(g))
-                     }))} layout="vertical">
-                       <XAxis type="number" hide />
-                       <YAxis dataKey="name" type="category" stroke="#818CF8" fontSize={10} width={80} />
-                       <Tooltip cursor={{ fill: 'transparent' }} contentStyle={{ backgroundColor: '#1E1B4B', border: 'none', borderRadius: '12px', fontSize: '12px' }} />
-                       <Bar dataKey="Đã hoàn thành" stackId="a" fill="#F8FAFC" radius={[0, 0, 0, 0]} barSize={20} />
-                       <Bar dataKey="Chưa hoàn thành" stackId="a" fill="#4F46E5" radius={[0, 10, 10, 0]} barSize={20} />
+                     <BarChart data={getBarChartData()}>
+                       <XAxis dataKey="name" stroke="#818CF8" fontSize={10} />
+                       <YAxis stroke="#818CF8" fontSize={10} />
+                       <Tooltip 
+                         cursor={{ fill: 'rgba(255, 255, 255, 0.05)' }} 
+                         contentStyle={{ backgroundColor: '#1E1B4B', border: 'none', borderRadius: '12px', fontSize: '12px' }}
+                         formatter={(value, name, props) => {
+                           const maxVal = props.payload['Điểm tối đa'] || props.payload['Tối đa'] || 100;
+                           return [`${value} / ${maxVal} điểm`, name];
+                         }}
+                       />
+                       <Bar 
+                         dataKey={statsPeriod === 'day' ? "Đạt được" : "Điểm đạt được"} 
+                         fill="#03ad9f" 
+                         radius={[6, 6, 0, 0]} 
+                         barSize={24} 
+                       />
                      </BarChart>
                    </ResponsiveContainer>
                  </div>
