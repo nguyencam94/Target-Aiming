@@ -29,6 +29,7 @@ interface SubTask {
   weight: number;
   completed: boolean;
   userId: string;
+  linkedDailyGoalId?: string;
 }
 
 interface Goal {
@@ -41,6 +42,9 @@ interface Goal {
   date: string; // YYYY-MM-DD
   userId: string;
   subtasks: SubTask[];
+  period?: 'day' | 'week' | 'month' | 'year';
+  parentGoalId?: string;
+  parentSubtaskId?: string;
 }
 
 interface ScheduleItem {
@@ -54,7 +58,7 @@ interface ScheduleItem {
   createdAt: any;
 }
 
-type ViewMode = 'daily' | 'stats' | 'calendar';
+type ViewMode = 'daily' | 'major-goals' | 'stats' | 'calendar';
 type StatsPeriod = 'day' | 'week' | 'month' | 'year';
 
 export default function App() {
@@ -100,6 +104,12 @@ export default function App() {
   const [newEndTime, setNewEndTime] = useState("");
 
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
+
+  const [showMajorGoalsModal, setShowMajorGoalsModal] = useState(false);
+  const [majorGoalsPeriod, setMajorGoalsPeriod] = useState<'week' | 'month' | 'year'>('week');
+  const [newMajorGoalText, setNewMajorGoalText] = useState("");
+  const [newMajorGoalDeadline, setNewMajorGoalDeadline] = useState("");
+  const [newMajorGoalWeight, setNewMajorGoalWeight] = useState("33");
 
   useEffect(() => {
     if ("Notification" in window) {
@@ -155,6 +165,7 @@ export default function App() {
   const [editEndTime, setEditEndTime] = useState("");
   const [showWeightWarning, setShowWeightWarning] = useState(false);
   const [warningGoalId, setWarningGoalId] = useState<string | null>(null);
+  const [promotingSubtask, setPromotingSubtask] = useState<{ goalId: string; sub: SubTask; parentGoal: Goal } | null>(null);
 
   const startEditSchedule = (item: any) => {
     setEditingScheduleId(item.id);
@@ -227,7 +238,15 @@ export default function App() {
         goalsList.push({ id: goalDoc.id, ...goalDoc.data(), subtasks: [] } as Goal);
       });
       
-      setGoals(goalsList);
+      setGoals(prev => {
+        return goalsList.map(newGoal => {
+          const existingGoal = prev.find(g => g.id === newGoal.id);
+          return {
+            ...newGoal,
+            subtasks: existingGoal ? existingGoal.subtasks : []
+          };
+        });
+      });
       setLoading(false);
 
       // Clean up subtask listeners for removed goals
@@ -301,6 +320,83 @@ export default function App() {
   const login = () => signInWithPopup(auth, googleProvider);
   const logout = () => signOut(auth);
 
+  const getWeekStartDate = (dateStr: string) => {
+    const d = new Date(dateStr);
+    const day = d.getDay();
+    const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+    const start = new Date(d);
+    start.setDate(diff);
+    return start.toISOString().split('T')[0];
+  };
+
+  const getDaysOfWeek = (mondayStr: string) => {
+    const days = [];
+    const weekdays = ['Hai', 'Ba', 'Tư', 'Năm', 'Sáu', 'Bảy', 'Chủ Nhật'];
+    const parts = mondayStr.split('-');
+    const monday = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+    
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(monday);
+      d.setDate(monday.getDate() + i);
+      const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const formattedDate = `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
+      days.push({
+        date: dateStr,
+        label: i === 6 ? `Chủ Nhật (${formattedDate})` : `Thứ ${weekdays[i]} (${formattedDate})`
+      });
+    }
+    return days;
+  };
+
+  const getFormattedDate = (dateStr: string) => {
+    if (!dateStr) return '';
+    const parts = dateStr.split('-');
+    if (parts.length === 3) {
+      return `${parts[2]}/${parts[1]}`;
+    }
+    return dateStr;
+  };
+
+  const getMonthStartDate = (dateStr: string) => {
+    const d = new Date(dateStr);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+  };
+
+  const getYearStartDate = (dateStr: string) => {
+    const d = new Date(dateStr);
+    return `${d.getFullYear()}-01-01`;
+  };
+
+  const addMajorGoal = async (period: 'week' | 'month' | 'year', text: string, deadline: string, weight: string) => {
+    if (!text.trim() || !user) return;
+
+    const periodDate = period === 'week' ? getWeekStartDate(selectedDate) :
+                       period === 'month' ? getMonthStartDate(selectedDate) :
+                       getYearStartDate(selectedDate);
+
+    const periodGoals = goals.filter(g => g.period === period && g.date === periodDate);
+
+    if (periodGoals.length >= 3) {
+      alert(`Bạn chỉ nên đặt tối đa 3 mục tiêu lớn mỗi ${period === 'week' ? 'tuần' : period === 'month' ? 'tháng' : 'năm'} để đạt hiệu quả cao nhất.`);
+      return;
+    }
+
+    try {
+      await addDoc(collection(db, "goals"), {
+        text: text,
+        deadline: deadline || null,
+        weight: parseFloat(weight) || 33.3,
+        completed: false,
+        userId: user.uid,
+        date: periodDate,
+        period: period,
+        createdAt: serverTimestamp()
+      });
+    } catch (err) {
+      console.error("Failed to add major goal", err);
+    }
+  };
+
   const isGoalInDate = (g: Goal, dateStr: string) => {
     if (g.date === dateStr) return true;
     if (!g.date && g.createdAt) {
@@ -331,6 +427,7 @@ export default function App() {
     }
 
     return goals.filter(g => {
+      if (g.period && g.period !== 'day') return false;
       let gDateStr = g.date;
       if (!gDateStr && g.createdAt) {
         const d = g.createdAt instanceof Timestamp ? g.createdAt.toDate() : 
@@ -348,7 +445,7 @@ export default function App() {
     if (!newGoalText.trim() || !user) return;
 
     // RULE OF 3 CHECK: Only count goals for the selected date
-    const dateGoals = goals.filter(g => isGoalInDate(g, selectedDate));
+    const dateGoals = goals.filter(g => isGoalInDate(g, selectedDate) && (!g.period || g.period === 'day'));
 
     if (dateGoals.length >= 3) {
       alert("Bạn chỉ nên đặt tối đa 3 mục tiêu lớn mỗi ngày để đạt hiệu quả cao nhất.");
@@ -363,6 +460,7 @@ export default function App() {
         completed: false,
         userId: user.uid,
         date: selectedDate,
+        period: 'day',
         createdAt: serverTimestamp()
       });
       
@@ -376,7 +474,21 @@ export default function App() {
 
   const toggleGoal = async (id: string, completed: boolean) => {
     try {
-      await updateDoc(doc(db, "goals", id), { completed: !completed });
+      const goalToToggle = goals.find(g => g.id === id);
+      const targetCompleted = !completed;
+      
+      await updateDoc(doc(db, "goals", id), { completed: targetCompleted });
+      
+      // If it is a daily goal linked to a parent subtask, sync completion status
+      if (goalToToggle?.parentGoalId && goalToToggle?.parentSubtaskId) {
+        try {
+          await updateDoc(doc(db, `goals/${goalToToggle.parentGoalId}/subtasks`, goalToToggle.parentSubtaskId), {
+            completed: targetCompleted
+          });
+        } catch (e) {
+          console.error("Could not sync to parent subtask", e);
+        }
+      }
     } catch (err) {
       console.error("Failed to toggle goal", err);
     }
@@ -426,7 +538,19 @@ export default function App() {
   const deleteGoal = async (id: string) => {
     if (!confirm("Xóa mục tiêu này và tất cả hạng mục con?")) return;
     try {
+      const goalToDelete = goals.find(g => g.id === id);
       await deleteDoc(doc(db, "goals", id));
+      
+      // If it has a parent subtask, clear its linkedDailyGoalId
+      if (goalToDelete?.parentGoalId && goalToDelete?.parentSubtaskId) {
+        try {
+          await updateDoc(doc(db, `goals/${goalToDelete.parentGoalId}/subtasks`, goalToDelete.parentSubtaskId), {
+            linkedDailyGoalId: null
+          });
+        } catch (e) {
+          console.error("Could not clear linked subtask reference", e);
+        }
+      }
     } catch (err) {
       console.error("Failed to delete goal", err);
     }
@@ -473,7 +597,21 @@ export default function App() {
 
   const toggleSubtask = async (goalId: string, subtaskId: string, completed: boolean) => {
     try {
-      await updateDoc(doc(db, `goals/${goalId}/subtasks`, subtaskId), { completed: !completed });
+      const targetCompleted = !completed;
+      await updateDoc(doc(db, `goals/${goalId}/subtasks`, subtaskId), { completed: targetCompleted });
+      
+      // If this subtask is linked to a daily goal, sync completion status
+      const parentGoal = goals.find(g => g.id === goalId);
+      const subtaskToToggle = parentGoal?.subtasks.find(s => s.id === subtaskId);
+      if (subtaskToToggle?.linkedDailyGoalId) {
+        try {
+          await updateDoc(doc(db, "goals", subtaskToToggle.linkedDailyGoalId), {
+            completed: targetCompleted
+          });
+        } catch (e) {
+          console.error("Could not sync to linked daily goal", e);
+        }
+      }
     } catch (err) {
       console.error("Failed to toggle subtask", err);
     }
@@ -481,9 +619,69 @@ export default function App() {
 
   const deleteSubtask = async (goalId: string, subtaskId: string) => {
     try {
+      const parentGoal = goals.find(g => g.id === goalId);
+      const subtaskToDelete = parentGoal?.subtasks.find(s => s.id === subtaskId);
+      
       await deleteDoc(doc(db, `goals/${goalId}/subtasks`, subtaskId));
+      
+      // If this subtask was linked to a daily goal, delete that daily goal too to keep things tidy
+      if (subtaskToDelete?.linkedDailyGoalId) {
+        try {
+          await deleteDoc(doc(db, "goals", subtaskToDelete.linkedDailyGoalId));
+        } catch (e) {
+          console.error("Could not delete linked daily goal", e);
+        }
+      }
     } catch (err) {
       console.error("Failed to delete subtask", err);
+    }
+  };
+
+  const executePromoteSubtaskToDailyGoal = async (goalId: string, sub: SubTask, targetDate: string) => {
+    if (!user) return;
+
+    // RULE OF 3 CHECK: Only count goals for the selected targetDate
+    const dateGoals = goals.filter(g => isGoalInDate(g, targetDate) && (!g.period || g.period === 'day'));
+
+    if (dateGoals.length >= 3) {
+      alert(`Ngày ${targetDate} đã có 3 mục tiêu ngày. Vui lòng hoàn thành hoặc xóa bớt để có thể chuyển hạng mục này thành mục tiêu ngày.`);
+      return;
+    }
+
+    try {
+      // 1. If this subtask already has a linkedDailyGoalId, we can check if it exists and delete/update it
+      if (sub.linkedDailyGoalId) {
+        try {
+          await deleteDoc(doc(db, "goals", sub.linkedDailyGoalId));
+        } catch (e) {
+          console.error("Could not delete previous linked goal", e);
+        }
+      }
+
+      // 2. Add as a daily goal for the targetDate with reference links
+      const newGoalRef = await addDoc(collection(db, "goals"), {
+        text: sub.text,
+        deadline: sub.deadline || null,
+        weight: sub.weight || 33.3,
+        completed: sub.completed,
+        userId: user.uid,
+        date: targetDate,
+        period: 'day',
+        parentGoalId: goalId,
+        parentSubtaskId: sub.id,
+        createdAt: serverTimestamp()
+      });
+
+      // 3. Update the subtask to store the linked daily goal reference
+      await updateDoc(doc(db, `goals/${goalId}/subtasks`, sub.id), {
+        linkedDailyGoalId: newGoalRef.id
+      });
+      
+      alert(`Đã dời và liên kết hạng mục thành công thành mục tiêu ngày cho ngày ${targetDate}!`);
+      setPromotingSubtask(null);
+    } catch (err) {
+      console.error("Failed to promote subtask", err);
+      alert(`Có lỗi xảy ra: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
 
@@ -561,7 +759,7 @@ export default function App() {
   };
 
   const calculateDayScore = (dateStr: string) => {
-    const dailyGoals = goals.filter(g => isGoalInDate(g, dateStr));
+    const dailyGoals = goals.filter(g => isGoalInDate(g, dateStr) && (!g.period || g.period === 'day'));
     if (dailyGoals.length === 0) return 0;
     const score = dailyGoals.reduce((sum, g) => {
       const goalProgress = calculateGoalProgress(g);
@@ -700,7 +898,7 @@ export default function App() {
     { name: 'Điểm chưa đạt', value: remainingScore }
   ];
 
-  const currentDailyGoals = goals.filter(g => isGoalInDate(g, selectedDate));
+  const currentDailyGoals = goals.filter(g => isGoalInDate(g, selectedDate) && (!g.period || g.period === 'day'));
   const currentDailySchedules = schedules.filter(s => s.date === selectedDate);
 
   const [activeQuoteIndex, setActiveQuoteIndex] = useState(0);
@@ -857,32 +1055,41 @@ export default function App() {
             <div className="flex items-center gap-1.5 md:gap-2">
               <button 
                 onClick={() => setViewMode('daily')}
-                className={`p-1.5 md:p-2 rounded-xl transition-all ${viewMode === 'daily' ? "bg-indigo-600 text-white shadow-lg" : "bg-white text-slate-400 border border-slate-100"}`}
+                className={`p-1.5 md:p-2 rounded-xl transition-all flex items-center gap-1.5 cursor-pointer ${viewMode === 'daily' ? "bg-indigo-600 text-white shadow-lg" : "bg-white text-slate-400 border border-slate-100 hover:bg-slate-50"}`}
+                title="Hàng ngày"
               >
                 <Home className="w-4 h-4 md:w-[18px] md:h-[18px]" />
+                <span className="hidden md:inline font-black text-[10px] md:text-[11px] uppercase tracking-wider">Hàng ngày</span>
+              </button>
+              <button 
+                onClick={() => {
+                  setViewMode('major-goals');
+                  setAddingSubtaskTo(null);
+                  setEditingGoalId(null);
+                }}
+                className={`p-1.5 md:p-2 rounded-xl transition-all flex items-center gap-1.5 cursor-pointer ${viewMode === 'major-goals' ? "bg-indigo-600 text-white shadow-lg" : "bg-white text-slate-400 border border-slate-100 hover:bg-slate-50"}`}
+                title="Mục tiêu lớn Tuần / Tháng / Năm"
+              >
+                <Layers className="w-4 h-4 md:w-[18px] md:h-[18px]" />
+                <span className="hidden md:inline font-black text-[10px] md:text-[11px] uppercase tracking-wider">Mục tiêu lớn</span>
               </button>
               <button 
                 onClick={() => setViewMode('stats')}
-                className={`p-1.5 md:p-2 rounded-xl transition-all ${viewMode === 'stats' ? "bg-indigo-600 text-white shadow-lg" : "bg-white text-slate-400 border border-slate-100"}`}
+                className={`p-1.5 md:p-2 rounded-xl transition-all flex items-center gap-1.5 cursor-pointer ${viewMode === 'stats' ? "bg-indigo-600 text-white shadow-lg" : "bg-white text-slate-400 border border-slate-100 hover:bg-slate-50"}`}
+                title="Thống kê"
               >
                 <BarChart2 className="w-4 h-4 md:w-[18px] md:h-[18px]" />
+                <span className="hidden md:inline font-black text-[10px] md:text-[11px] uppercase tracking-wider">Thống kê</span>
               </button>
               <button 
                 onClick={() => setViewMode('calendar')}
-                className={`p-1.5 md:p-2 rounded-xl transition-all ${viewMode === 'calendar' ? "bg-indigo-600 text-white shadow-lg" : "bg-white text-slate-400 border border-slate-100"}`}
+                className={`p-1.5 md:p-2 rounded-xl transition-all flex items-center gap-1.5 cursor-pointer ${viewMode === 'calendar' ? "bg-indigo-600 text-white shadow-lg" : "bg-white text-slate-400 border border-slate-100 hover:bg-slate-50"}`}
+                title="Lịch"
               >
                 <Calendar className="w-4 h-4 md:w-[18px] md:h-[18px]" />
+                <span className="hidden md:inline font-black text-[10px] md:text-[11px] uppercase tracking-wider">Lịch</span>
               </button>
 
-              {!notificationsEnabled && (
-                <button 
-                  onClick={requestNotificationPermission}
-                  className="p-1.5 md:p-2 rounded-xl bg-amber-50 text-amber-600 border border-amber-100 animate-pulse transition-all hover:bg-amber-100"
-                  title="Bật thông báo nhắc nhở"
-                >
-                  <Bell className="w-4 h-4 md:w-[18px] md:h-[18px]" />
-                </button>
-              )}
               <div className="hidden sm:flex flex-col items-end mx-2">
                 <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">
                   {selectedDate === new Date().toISOString().split('T')[0] ? "Hôm nay" : "Đang xem"}
@@ -891,7 +1098,7 @@ export default function App() {
               </div>
               <button 
                 onClick={logout}
-                className="p-2 bg-white border border-slate-200 rounded-xl text-slate-400 hover:text-red-500 hover:border-red-100 transition-all shadow-sm"
+                className="p-2 bg-white border border-slate-200 rounded-xl text-slate-400 hover:text-red-500 hover:border-red-100 transition-all shadow-sm cursor-pointer"
                 title="Đăng xuất"
               >
                 <LogOut className="w-[16px] h-[16px] md:w-[18px] md:h-[18px]" />
@@ -1009,6 +1216,7 @@ export default function App() {
           {(() => {
             const backlogGoals = goals.filter(g => {
               if (g.completed) return false;
+              if (g.period && g.period !== 'day') return false;
               let gDateStr = g.date;
               if (!gDateStr && g.createdAt) {
                 const d = g.createdAt instanceof Timestamp ? g.createdAt.toDate() : 
@@ -1584,6 +1792,346 @@ export default function App() {
           </div>
         </section>
       </div>
+    ) : viewMode === 'major-goals' ? (
+      <motion.div 
+        initial={{ opacity: 0, y: 15 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="space-y-6"
+      >
+        {/* Page Header */}
+        <div className="bg-white rounded-[2rem] p-6 md:p-8 border border-slate-100 shadow-xl shadow-slate-200/30 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <h2 className="text-xl md:text-2xl font-black text-slate-900 tracking-tight flex items-center gap-2">
+              <Layers className="text-indigo-600 w-5 h-5 md:w-6 md:h-6" /> Mục tiêu lớn kỳ hạn
+            </h2>
+            <p className="text-slate-400 text-xs font-bold mt-1">Định hướng tầm nhìn lớn cho tuần, tháng và năm</p>
+          </div>
+
+          {/* Period Tabs inside header card for tighter integration */}
+          <div className="flex gap-1.5 p-1 bg-slate-100 rounded-xl md:rounded-2xl shrink-0">
+            {(['week', 'month', 'year'] as const).map((period) => {
+              const label = period === 'week' ? 'Tuần này' : period === 'month' ? 'Tháng này' : 'Năm nay';
+              const isActive = majorGoalsPeriod === period;
+              return (
+                <button
+                  key={period}
+                  onClick={() => {
+                    setMajorGoalsPeriod(period);
+                    setAddingSubtaskTo(null);
+                    setEditingGoalId(null);
+                  }}
+                  className={`px-3 py-1.5 md:px-5 md:py-2.5 rounded-lg md:rounded-xl font-black text-xs uppercase tracking-wider transition-all cursor-pointer ${
+                    isActive 
+                      ? 'bg-white text-indigo-600 shadow-sm font-extrabold' 
+                      : 'text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Goals Section for current period */}
+        {(() => {
+          const periodDate = majorGoalsPeriod === 'week' ? getWeekStartDate(selectedDate) :
+                             majorGoalsPeriod === 'month' ? getMonthStartDate(selectedDate) :
+                             getYearStartDate(selectedDate);
+          const periodGoals = goals.filter(g => g.period === majorGoalsPeriod && g.date === periodDate);
+          const label = majorGoalsPeriod === 'week' ? `Tuần hiện tại (bắt đầu từ ${periodDate})` :
+                        majorGoalsPeriod === 'month' ? `Tháng hiện tại (${periodDate.substring(0, 7)})` :
+                        `Năm hiện tại (${periodDate.substring(0, 4)})`;
+
+          return (
+            <div className="space-y-6">
+              <div className="flex items-center justify-between px-2">
+                <span className="text-xs font-black text-slate-400 uppercase tracking-widest">{label}</span>
+                <span className="text-xs font-black text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full">{periodGoals.length} / 3 mục tiêu</span>
+              </div>
+
+              {/* Add Goal Form if < 3 */}
+              {periodGoals.length < 3 ? (
+                <form 
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    if (!newMajorGoalText.trim()) return;
+                    await addMajorGoal(majorGoalsPeriod, newMajorGoalText, newMajorGoalDeadline, newMajorGoalWeight);
+                    setNewMajorGoalText("");
+                    setNewMajorGoalDeadline("");
+                    setNewMajorGoalWeight("33");
+                  }}
+                  className="bg-white rounded-3xl p-5 md:p-6 border border-slate-100 shadow-xl shadow-slate-200/20 space-y-4"
+                >
+                  <div className="flex items-center gap-2">
+                    <Sparkles size={16} className="text-indigo-500 animate-spin" style={{ animationDuration: '6s' }} />
+                    <span className="text-[10px] font-black text-indigo-600 uppercase tracking-widest">
+                      Thêm mục tiêu lớn {majorGoalsPeriod === 'week' ? 'tuần' : majorGoalsPeriod === 'month' ? 'tháng' : 'năm'} mới ({periodGoals.length}/3)
+                    </span>
+                  </div>
+                  <div className="flex flex-col sm:flex-row gap-3">
+                    <input
+                      type="text"
+                      value={newMajorGoalText}
+                      onChange={(e) => setNewMajorGoalText(e.target.value)}
+                      placeholder={`Mục tiêu lớn ${majorGoalsPeriod === 'week' ? 'tuần' : majorGoalsPeriod === 'month' ? 'tháng' : 'năm'} tiếp theo...`}
+                      className="flex-grow bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 text-sm font-bold text-slate-900 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 transition-all outline-none"
+                    />
+                    <div className="flex gap-2">
+                      <div className="flex items-center gap-2 bg-slate-50 px-3 py-2 rounded-xl text-slate-500 text-xs font-bold border border-slate-100 focus-within:border-indigo-500 transition-all">
+                        <Target className="text-indigo-500 w-3.5 h-3.5" />
+                        <input 
+                          type="number" 
+                          value={newMajorGoalWeight}
+                          onChange={(e) => setNewMajorGoalWeight(e.target.value)}
+                          placeholder="Điểm"
+                          className="bg-transparent border-none focus:ring-0 p-0 text-xs font-bold w-10 text-center outline-none"
+                        />
+                        <span className="text-slate-500 text-xs">đ</span>
+                      </div>
+                      <button
+                        type="submit"
+                        disabled={!newMajorGoalText.trim()}
+                        className="bg-indigo-600 text-white px-5 rounded-xl font-black text-xs uppercase tracking-widest hover:bg-indigo-700 active:scale-95 transition-all disabled:opacity-50 cursor-pointer"
+                      >
+                        Thêm
+                      </button>
+                    </div>
+                  </div>
+                </form>
+              ) : (
+                <div className="bg-amber-50 border border-amber-100 rounded-2xl p-4 text-center">
+                  <p className="text-xs font-bold text-amber-700 flex items-center justify-center gap-1.5">
+                    <AlertCircle size={14} /> Bạn đã đặt tối đa 3 mục tiêu lớn cho {majorGoalsPeriod === 'week' ? 'tuần' : majorGoalsPeriod === 'month' ? 'tháng' : 'năm'} này.
+                  </p>
+                </div>
+              )}
+
+              {/* Goals List */}
+              <div className="space-y-4">
+                {periodGoals.length === 0 ? (
+                  <div className="bg-white rounded-3xl border border-dashed border-slate-200 py-12 text-center text-slate-400">
+                    <p className="text-sm font-bold">Chưa có mục tiêu nào được đặt cho kỳ này.</p>
+                    <p className="text-xs mt-1">Hãy bắt đầu đặt mục tiêu lớn để định hướng và theo dõi tiến độ!</p>
+                  </div>
+                ) : (
+                  periodGoals.map((goal) => {
+                    const isExpanded = expandedGoalId === goal.id;
+                    return (
+                      <div 
+                        key={goal.id}
+                        className={`bg-white rounded-3xl border border-slate-100 p-6 shadow-xl shadow-slate-200/20 transition-all duration-300 ${
+                          isExpanded ? "ring-4 ring-indigo-500/5 border-indigo-100" : ""
+                        }`}
+                      >
+                        <div className="flex items-start gap-4">
+                          {/* Checkbox circle with percentage */}
+                          <div className="mt-0.5 flex-shrink-0 cursor-pointer" onClick={() => toggleGoal(goal.id, goal.completed)}>
+                            <div className="w-10 h-10 flex items-center justify-center relative">
+                              <svg className="w-full h-full transform -rotate-90">
+                                <circle cx="50%" cy="50%" r="40%" className="stroke-slate-100 fill-none" strokeWidth="8%" />
+                                <motion.circle
+                                  cx="50%"
+                                  cy="50%"
+                                  r="40%"
+                                  className={`${goal.completed ? "stroke-emerald-500" : "stroke-indigo-600"} fill-none`}
+                                  strokeWidth="8%"
+                                  strokeLinecap="round"
+                                  initial={{ pathLength: 0 }}
+                                  animate={{ pathLength: calculateGoalProgress(goal) / 100 }}
+                                  transition={{ duration: 1 }}
+                                />
+                              </svg>
+                              <div className="absolute inset-0 flex items-center justify-center">
+                                <span className={`text-[8px] font-black ${goal.completed ? "text-emerald-600" : "text-indigo-600"}`}>
+                                  {Math.round(calculateGoalProgress(goal))}%
+                                </span>
+                              </div>
+                              {goal.completed && (
+                                <div className="absolute -top-1 -right-1 bg-emerald-500 text-white p-0.5 rounded-full border border-white">
+                                  <Check size={6} strokeWidth={4} />
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Goal Text / Edit field */}
+                          <div className="flex-grow min-w-0">
+                            {editingGoalId === goal.id ? (
+                              <div className="space-y-2">
+                                <input
+                                  type="text"
+                                  value={editGoalText}
+                                  onChange={(e) => setEditGoalText(e.target.value)}
+                                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-sm font-bold text-slate-900 focus:outline-none"
+                                  autoFocus
+                                />
+                                <div className="flex gap-2">
+                                  <button onClick={() => saveEditGoal(goal.id)} className="bg-indigo-600 text-white px-3 py-1 rounded-lg text-[10px] font-bold cursor-pointer">Lưu</button>
+                                  <button onClick={() => setEditingGoalId(null)} className="bg-slate-200 text-slate-600 px-3 py-1 rounded-lg text-[10px] font-bold cursor-pointer">Hủy</button>
+                                </div>
+                              </div>
+                            ) : (
+                              <div>
+                                <h3 className={`text-sm md:text-base font-black leading-snug break-words ${goal.completed ? "text-slate-300 line-through font-medium" : "text-slate-900"}`}>
+                                  {goal.text}
+                                </h3>
+                                <div className="flex items-center gap-3 mt-1.5 text-[9px] text-slate-400 font-bold uppercase tracking-wider">
+                                  <span className="bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full text-[8px] font-black">{goal.weight} điểm</span>
+                                  <span>{goal.subtasks?.length || 0} hạng mục</span>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Action Buttons */}
+                          {editingGoalId !== goal.id && (
+                            <div className="flex gap-1.5 shrink-0">
+                              <button 
+                                onClick={() => {
+                                  setEditingGoalId(goal.id);
+                                  setEditGoalText(goal.text);
+                                  setEditGoalWeight(goal.weight?.toString() || "");
+                                  setEditGoalDate(goal.date);
+                                }}
+                                className="p-1 bg-slate-50 hover:bg-indigo-50 text-slate-400 hover:text-indigo-600 rounded-lg border border-slate-100 transition-colors cursor-pointer"
+                              >
+                                <Edit3 size={12} />
+                              </button>
+                              <button 
+                                onClick={() => setExpandedGoalId(isExpanded ? null : goal.id)}
+                                className={`p-1 rounded-lg border transition-all cursor-pointer ${
+                                  isExpanded ? "bg-indigo-600 text-white border-indigo-600 shadow-sm" : "bg-slate-50 text-slate-400 border-slate-100 hover:bg-slate-100"
+                                }`}
+                              >
+                                <Layers size={12} />
+                              </button>
+                              <button 
+                                onClick={() => deleteGoal(goal.id)}
+                                className="p-1 bg-slate-50 hover:bg-red-50 text-slate-400 hover:text-red-500 rounded-lg border border-slate-100 transition-colors cursor-pointer"
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Subtasks under the Goal */}
+                        <AnimatePresence>
+                          {isExpanded && (
+                            <motion.div 
+                              initial={{ height: 0, opacity: 0 }}
+                              animate={{ height: "auto", opacity: 1 }}
+                              exit={{ height: 0, opacity: 0 }}
+                              className="overflow-hidden mt-4 pt-4 border-t border-slate-100 space-y-3"
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+                                  <Layers size={10} className="text-indigo-500" /> Hạng mục chi tiết
+                                </span>
+                                <button
+                                  onClick={() => setAddingSubtaskTo(addingSubtaskTo === goal.id ? null : goal.id)}
+                                  className="bg-indigo-50 text-indigo-600 hover:bg-indigo-600 hover:text-white px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all cursor-pointer"
+                                >
+                                  {addingSubtaskTo === goal.id ? 'Đóng' : '+ Thêm mới'}
+                                </button>
+                              </div>
+
+                              {/* Add subtask inline input */}
+                              {addingSubtaskTo === goal.id && (
+                                <div className="bg-slate-50 p-3 rounded-xl border border-indigo-50 space-y-3">
+                                  <input
+                                    type="text"
+                                    value={subtaskText}
+                                    onChange={(e) => setSubtaskText(e.target.value)}
+                                    placeholder="Tên hạng mục..."
+                                    className="w-full font-bold text-slate-900 border-none bg-white rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-indigo-100 outline-none font-sans"
+                                  />
+                                  <div className="flex gap-2">
+                                    <div className="flex items-center gap-1 bg-white px-2.5 py-1.5 rounded-lg border border-slate-100 text-slate-500 text-[10px] font-bold flex-1">
+                                      <Percent size={12} className="text-indigo-500" />
+                                      <input 
+                                        type="number" 
+                                        placeholder="Tỷ trọng %" 
+                                        value={subtaskWeight} 
+                                        onChange={(e) => setSubtaskWeight(e.target.value)} 
+                                        className="bg-transparent border-none w-full focus:ring-0 p-0 text-[10px] font-bold outline-none font-sans"
+                                      />
+                                    </div>
+                                    <button 
+                                      onClick={() => addSubtask(goal.id, true)}
+                                      className="bg-indigo-600 text-white px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider hover:bg-indigo-700 transition-all cursor-pointer"
+                                    >
+                                      Thêm
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Subtasks List */}
+                              <div className="space-y-2">
+                                {!goal.subtasks || goal.subtasks.length === 0 ? (
+                                  <p className="text-[10px] text-slate-400 italic py-1">Chưa có hạng mục con nào.</p>
+                                ) : (
+                                  goal.subtasks.map((sub) => {
+                                    const linkedGoal = sub.linkedDailyGoalId ? goals.find(g => g.id === sub.linkedDailyGoalId) : null;
+                                    return (
+                                      <div key={sub.id} className="flex items-center justify-between bg-slate-50/50 p-2.5 rounded-xl border border-slate-100/50 hover:bg-slate-50 transition-colors">
+                                        <div className="flex items-center gap-2 flex-grow min-w-0 pr-2">
+                                          <button 
+                                            onClick={() => toggleSubtask(goal.id, sub.id, sub.completed)}
+                                            className={`transform active:scale-75 transition-all shrink-0 cursor-pointer ${sub.completed ? "text-emerald-500" : "text-slate-300 hover:text-emerald-400"}`}
+                                          >
+                                            {sub.completed ? <CheckCircle2 className="w-4 h-4" /> : <Circle className="w-4 h-4" />}
+                                          </button>
+                                          <span className={`text-xs font-bold truncate ${sub.completed ? "text-slate-300 line-through font-normal" : "text-slate-700"}`}>
+                                            {sub.text}
+                                          </span>
+                                        </div>
+                                        <div className="flex items-center gap-2 shrink-0">
+                                          {sub.weight > 0 && (
+                                            <span className="text-[8px] bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded-full font-black uppercase tracking-wider">{sub.weight}%</span>
+                                          )}
+                                          {linkedGoal && (
+                                            <span 
+                                              className="text-[9px] bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full font-black flex items-center gap-1 shrink-0 font-sans cursor-default"
+                                              title={`Mục tiêu ngày: ${linkedGoal.date}`}
+                                            >
+                                              <CalendarIcon size={9} />
+                                              <span>{getFormattedDate(linkedGoal.date)}</span>
+                                            </span>
+                                          )}
+                                          <button 
+                                            onClick={() => setPromotingSubtask({ goalId: goal.id, sub, parentGoal: goal })}
+                                            className={`p-0.5 cursor-pointer transition-colors ${linkedGoal ? "text-indigo-600 hover:text-indigo-800" : "text-slate-300 hover:text-indigo-600"}`}
+                                            title={linkedGoal ? `Đã lên lịch ngày ${getFormattedDate(linkedGoal.date)}. Nhấp để xếp lại lịch.` : "Xếp lịch (Chuyển thành mục tiêu ngày)"}
+                                          >
+                                            <CalendarIcon size={11} />
+                                          </button>
+                                          <button 
+                                            onClick={() => deleteSubtask(goal.id, sub.id)}
+                                            className="text-slate-300 hover:text-red-500 p-0.5 cursor-pointer"
+                                          >
+                                            <Trash2 size={10} />
+                                          </button>
+                                        </div>
+                                      </div>
+                                    );
+                                  })
+                                )}
+                              </div>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          );
+        })()}
+      </motion.div>
     ) : viewMode === 'stats' ? (
           <motion.div 
             initial={{ opacity: 0, y: 20 }}
@@ -1877,6 +2425,8 @@ export default function App() {
            </div>
         </footer>
 
+
+
         {/* Weight Warning Modal */}
         <AnimatePresence>
           {showWeightWarning && (
@@ -1921,6 +2471,101 @@ export default function App() {
                     className="w-full bg-white text-slate-400 py-4 rounded-xl font-black uppercase tracking-widest text-xs border border-slate-100 hover:bg-slate-50 transition-all font-sans"
                   >
                     Quay lại chỉnh sửa
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+
+          {promotingSubtask && (
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm"
+            >
+              <motion.div 
+                initial={{ scale: 0.9, y: 20 }}
+                animate={{ scale: 1, y: 0 }}
+                exit={{ scale: 0.9, y: 20 }}
+                className="bg-white rounded-[2rem] p-6 md:p-8 max-w-md w-full shadow-2xl border border-slate-100 max-h-[90vh] overflow-y-auto"
+              >
+                <div className="w-16 h-16 bg-indigo-50 rounded-2xl flex items-center justify-center mb-6 mx-auto">
+                  <CalendarIcon className="text-indigo-600" size={32} />
+                </div>
+                
+                <h3 className="text-xl font-black text-slate-900 text-center mb-1">
+                  Sắp xếp ngày thực hiện
+                </h3>
+                <p className="text-slate-400 text-xs text-center font-bold uppercase tracking-widest mb-6 font-sans">
+                  Chuyển hạng mục con thành mục tiêu ngày
+                </p>
+
+                <div className="bg-slate-50 rounded-2xl p-4 mb-6 space-y-2 text-left">
+                  <div>
+                    <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider block font-sans">Mục tiêu gốc</span>
+                    <span className="text-xs font-bold text-slate-500">{promotingSubtask.parentGoal.text}</span>
+                  </div>
+                  <div className="border-t border-slate-100 pt-2">
+                    <span className="text-[10px] font-black uppercase text-indigo-400 tracking-wider block font-sans">Hạng mục con cần chuyển</span>
+                    <span className="text-sm font-extrabold text-slate-800">{promotingSubtask.sub.text}</span>
+                  </div>
+                </div>
+
+                <div className="mb-6">
+                  <h4 className="text-[10px] font-black uppercase text-slate-400 tracking-wider text-left mb-3 font-sans">
+                    Chọn một ngày trong tuần ({getWeekStartDate(promotingSubtask.parentGoal.date)} - {(() => {
+                      const d = new Date(getWeekStartDate(promotingSubtask.parentGoal.date));
+                      d.setDate(d.getDate() + 6);
+                      return d.toISOString().split('T')[0];
+                    })()})
+                  </h4>
+                  
+                  <div className="grid grid-cols-1 gap-2 max-h-[240px] overflow-y-auto pr-1">
+                    {getDaysOfWeek(getWeekStartDate(promotingSubtask.parentGoal.date)).map((day) => {
+                      const dayGoalsCount = goals.filter(g => isGoalInDate(g, day.date) && (!g.period || g.period === 'day')).length;
+                      const isFull = dayGoalsCount >= 3;
+                      
+                      return (
+                        <button
+                          key={day.date}
+                          disabled={isFull}
+                          onClick={() => executePromoteSubtaskToDailyGoal(promotingSubtask.goalId, promotingSubtask.sub, day.date)}
+                          className={`p-3.5 rounded-xl text-left border transition-all flex items-center justify-between ${
+                            isFull 
+                              ? "bg-slate-50 border-slate-100 opacity-60 cursor-not-allowed text-slate-400" 
+                              : "border-slate-100 hover:border-indigo-600 hover:bg-indigo-50/10 cursor-pointer text-slate-800"
+                          }`}
+                        >
+                          <div className="text-left">
+                            <span className="text-xs font-black block">{day.label}</span>
+                            <span className="text-[10px] font-bold text-slate-400">{day.date}</span>
+                          </div>
+                          <div className="text-right shrink-0">
+                            {isFull ? (
+                              <span className="text-[9px] bg-red-50 text-red-600 px-2 py-0.5 rounded-full font-black uppercase tracking-wider font-sans">Đầy (3/3)</span>
+                            ) : (
+                              <span className={`text-[9px] px-2 py-0.5 rounded-full font-black uppercase tracking-wider font-sans ${
+                                dayGoalsCount === 0 
+                                  ? "bg-emerald-50 text-emerald-600" 
+                                  : "bg-indigo-50 text-indigo-600"
+                              }`}>
+                                {dayGoalsCount}/3 mục tiêu
+                              </span>
+                            )}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <button 
+                    onClick={() => setPromotingSubtask(null)}
+                    className="w-full bg-white text-slate-400 py-4 rounded-xl font-black uppercase tracking-widest text-xs border border-slate-100 hover:bg-slate-50 transition-all font-sans cursor-pointer"
+                  >
+                    Hủy bỏ
                   </button>
                 </div>
               </motion.div>

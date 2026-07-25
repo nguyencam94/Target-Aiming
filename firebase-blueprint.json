@@ -2,14 +2,18 @@
   "entities": {
     "Goal": {
       "title": "Goal",
-      "description": "A strategic daily goal (one of the Big 3)",
+      "description": "A strategic daily, weekly, monthly, or yearly goal",
       "type": "object",
       "properties": {
         "text": { "type": "string" },
         "deadline": { "type": "string" },
         "completed": { "type": "boolean" },
         "userId": { "type": "string" },
-        "createdAt": { "type": "string" }
+        "createdAt": { "type": "string" },
+        "date": { "type": "string" },
+        "period": { "type": "string", "enum": ["day", "week", "month", "year"] },
+        "parentGoalId": { "type": "string" },
+        "parentSubtaskId": { "type": "string" }
       },
       "required": ["text", "userId", "createdAt"]
     },
@@ -23,9 +27,11 @@
         "deadline": { "type": "string" },
         "workloadValue": { "type": "number" },
         "workloadUnit": { "type": "string" },
+        "weight": { "type": "number" },
         "completed": { "type": "boolean" },
         "userId": { "type": "string" },
-        "createdAt": { "type": "string" }
+        "createdAt": { "type": "string" },
+        "linkedDailyGoalId": { "type": "string" }
       },
       "required": ["goalId", "text", "userId", "createdAt"]
     },
