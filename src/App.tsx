@@ -6,7 +6,7 @@ import {
   Target, Layers, Ruler, AlertCircle, Clock, Bell,
   LogIn, LogOut, User as UserIcon, Edit3,
   Percent, BarChart2, Home, List as ListIcon,
-  ChevronLeft, ChevronRight, Calendar
+  ChevronLeft, ChevronRight, Calendar, Sparkles
 } from "lucide-react";
 import { 
   ResponsiveContainer, PieChart, Pie, Cell, 
@@ -726,9 +726,10 @@ export default function App() {
                     <button
                       type="submit"
                       disabled={!newGoalText.trim()}
-                      className="flex-grow sm:flex-grow-0 bg-slate-900 text-white px-5 md:px-7 py-2.5 md:py-3 rounded-xl font-black text-xs uppercase tracking-widest hover:bg-indigo-600 transition-all shadow-md disabled:opacity-50 h-full"
+                      className="flex-grow sm:flex-grow-0 flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-500 via-teal-500 to-emerald-600 text-white px-5 md:px-7 py-2.5 md:py-3 rounded-xl font-black text-xs uppercase tracking-widest hover:from-emerald-600 hover:to-teal-600 hover:scale-105 active:scale-95 transition-all duration-200 shadow-lg shadow-emerald-500/30 hover:shadow-emerald-500/50 disabled:opacity-50 disabled:hover:scale-100 disabled:shadow-none h-full group cursor-pointer"
                     >
-                      Bắt đầu
+                      <Sparkles className="w-3.5 h-3.5 text-emerald-100 group-hover:rotate-12 transition-transform" />
+                      <span className="[text-shadow:_0_1px_2px_rgba(0,0,0,0.3)]">Bắt đầu</span>
                     </button>
                   </div>
                 </div>
