@@ -206,6 +206,11 @@ export default function App() {
     return () => unsubscribeAuth();
   }, []);
 
+  useEffect(() => {
+    const maxVal = getPeriodDaysCount(majorGoalsPeriod, selectedDate) * 100;
+    setNewMajorGoalWeight(String(Math.min(100, maxVal)));
+  }, [majorGoalsPeriod, selectedDate]);
+
   // Helper to handle and log Firestore errors for debugging
   const handleFirestoreError = (error: any, operationType: string, path: string) => {
     const errInfo = {
@@ -367,6 +372,24 @@ export default function App() {
     return `${d.getFullYear()}-01-01`;
   };
 
+  const getPeriodDaysCount = (period: 'week' | 'month' | 'year', dateStr: string) => {
+    const d = new Date(dateStr);
+    if (period === 'week') {
+      return 7;
+    }
+    if (period === 'month') {
+      const year = d.getFullYear();
+      const month = d.getMonth() + 1; // 1-indexed
+      return new Date(year, month, 0).getDate();
+    }
+    if (period === 'year') {
+      const year = d.getFullYear();
+      const isLeap = (year % 4 === 0 && year % 100 !== 0) || (year % 400 === 0);
+      return isLeap ? 366 : 365;
+    }
+    return 1;
+  };
+
   const addMajorGoal = async (period: 'week' | 'month' | 'year', text: string, deadline: string, weight: string) => {
     if (!text.trim() || !user) return;
 
@@ -377,7 +400,14 @@ export default function App() {
     const periodGoals = goals.filter(g => g.period === period && g.date === periodDate);
 
     if (periodGoals.length >= 3) {
-      alert(`Bạn chỉ nên đặt tối đa 3 mục tiêu lớn mỗi ${period === 'week' ? 'tuần' : period === 'month' ? 'tháng' : 'năm'} để đạt hiệu quả cao nhất.`);
+      alert(`Bạn chỉ nên đặt tối đa 3 dự án mỗi ${period === 'week' ? 'tuần' : period === 'month' ? 'tháng' : 'năm'} để đạt hiệu quả cao nhất.`);
+      return;
+    }
+
+    const maxPoints = getPeriodDaysCount(period, selectedDate) * 100;
+    const parsedWeight = parseFloat(weight) || 0;
+    if (parsedWeight < 0 || parsedWeight > maxPoints) {
+      alert(`Số điểm của dự án phải nằm trong khoảng từ 0 đến ${maxPoints} điểm (số ngày * 100).`);
       return;
     }
 
@@ -385,7 +415,7 @@ export default function App() {
       await addDoc(collection(db, "goals"), {
         text: text,
         deadline: deadline || null,
-        weight: parseFloat(weight) || 33.3,
+        weight: parsedWeight,
         completed: false,
         userId: user.uid,
         date: periodDate,
@@ -513,10 +543,19 @@ export default function App() {
   const saveEditGoal = async (id: string) => {
     if (!editGoalText.trim()) return;
     try {
+      const goalToEdit = goals.find(g => g.id === id);
+      const parsedWeight = parseFloat(editGoalWeight) || 0;
+      if (goalToEdit && goalToEdit.period && goalToEdit.period !== 'day') {
+        const maxPoints = getPeriodDaysCount(goalToEdit.period, goalToEdit.date || selectedDate) * 100;
+        if (parsedWeight < 0 || parsedWeight > maxPoints) {
+          alert(`Số điểm của dự án phải nằm trong khoảng từ 0 đến ${maxPoints} điểm (số ngày * 100).`);
+          return;
+        }
+      }
       await updateDoc(doc(db, "goals", id), {
         text: editGoalText,
         deadline: editGoalDeadline || null,
-        weight: parseFloat(editGoalWeight) || 0,
+        weight: parsedWeight,
         date: editGoalDate
       });
       setEditingGoalId(null);
@@ -559,18 +598,24 @@ export default function App() {
   const addSubtask = async (goalId: string, skipWarning = false) => {
     if (!subtaskText.trim() || !user) return;
 
-    if (!skipWarning && (subtaskWeight === "0" || subtaskWeight === "")) {
-      setWarningGoalId(goalId);
-      setShowWeightWarning(true);
-      return;
-    }
-
     try {
-      // Calculate remaining weight for subtasks if user hasn't specified
-      const currentSubtasks = goals.find(g => g.id === goalId)?.subtasks || [];
-      const totalWeightUsed = currentSubtasks.reduce((sum, s) => sum + (s.weight || 0), 0);
-      const defaultWeight = Math.max(0, 100 - totalWeightUsed);
-      const finalWeight = (subtaskWeight === "0" || subtaskWeight === "") ? defaultWeight : parseFloat(subtaskWeight);
+      const parentGoal = goals.find(g => g.id === goalId);
+      if (!parentGoal) return;
+      const parentWeight = parentGoal.weight || 0;
+      const maxAllowed = Math.min(100, parentWeight);
+
+      const parsedWeight = parseFloat(subtaskWeight);
+      const finalWeight = isNaN(parsedWeight) ? 0 : parsedWeight;
+
+      if (finalWeight < 0) {
+        alert("Số điểm không thể nhỏ hơn 0.");
+        return;
+      }
+
+      if (finalWeight > maxAllowed) {
+        alert(`Số điểm của hạng mục con không được vượt quá tổng số điểm dự án (${parentWeight} đ) và không được vượt quá 100 đ.`);
+        return;
+      }
 
       await addDoc(collection(db, `goals/${goalId}/subtasks`), {
         goalId,
@@ -737,12 +782,30 @@ export default function App() {
   const saveEditSubtask = async (goalId: string, subtaskId: string) => {
     if (!editSubtaskText.trim()) return;
     try {
+      const parentGoal = goals.find(g => g.id === goalId);
+      if (!parentGoal) return;
+      const parentWeight = parentGoal.weight || 0;
+      const maxAllowed = Math.min(100, parentWeight);
+
+      const parsedWeight = parseFloat(editSubtaskWeight);
+      const finalWeight = isNaN(parsedWeight) ? 0 : parsedWeight;
+
+      if (finalWeight < 0) {
+        alert("Số điểm không thể nhỏ hơn 0.");
+        return;
+      }
+
+      if (finalWeight > maxAllowed) {
+        alert(`Số điểm của hạng mục con không được vượt quá tổng số điểm dự án (${parentWeight} đ) và không được vượt quá 100 đ.`);
+        return;
+      }
+
       await updateDoc(doc(db, `goals/${goalId}/subtasks`, subtaskId), {
         text: editSubtaskText,
         deadline: editSubtaskDeadline || null,
         workloadValue: editSubtaskWorkload ? parseFloat(editSubtaskWorkload) : null,
         workloadUnit: editSubtaskUnit || null,
-        weight: parseFloat(editSubtaskWeight) || 0,
+        weight: finalWeight,
       });
       setEditingSubtaskId(null);
     } catch (err) {
@@ -1068,10 +1131,10 @@ export default function App() {
                   setEditingGoalId(null);
                 }}
                 className={`p-1.5 md:p-2 rounded-xl transition-all flex items-center gap-1.5 cursor-pointer ${viewMode === 'major-goals' ? "bg-indigo-600 text-white shadow-lg" : "bg-white text-slate-400 border border-slate-100 hover:bg-slate-50"}`}
-                title="Mục tiêu lớn Tuần / Tháng / Năm"
+                title="Dự án Tuần / Tháng / Năm"
               >
                 <Layers className="w-4 h-4 md:w-[18px] md:h-[18px]" />
-                <span className="hidden md:inline font-black text-[10px] md:text-[11px] uppercase tracking-wider">Mục tiêu lớn</span>
+                <span className="hidden md:inline font-black text-[10px] md:text-[11px] uppercase tracking-wider">Dự án</span>
               </button>
               <button 
                 onClick={() => setViewMode('stats')}
@@ -1533,9 +1596,9 @@ export default function App() {
                               <input type="number" placeholder="Khối lượng" value={subtaskWorkload} onChange={(e) => setSubtaskWorkload(e.target.value)} className="bg-transparent border-none w-full focus:ring-0 p-0 font-bold text-sm md:text-base"/>
                             </div>
                             <input type="text" placeholder="Đơn vị" value={subtaskUnit} onChange={(e) => setSubtaskUnit(e.target.value)} className="bg-slate-50 border-none rounded-xl md:rounded-2xl px-4 py-2.5 md:px-5 md:py-3 font-bold text-slate-700 focus:ring-4 focus:ring-indigo-100 text-sm md:text-base"/>
-                            <div className="flex items-center gap-3 bg-slate-50 px-4 py-2 md:px-5 md:py-3 rounded-xl md:rounded-2xl text-slate-700 border-2 border-transparent focus-within:border-indigo-100 transition-all">
-                              <Percent className="text-indigo-500 w-4 h-4 md:w-[18px] md:h-[18px]" />
-                              <input type="number" placeholder="Tỷ trọng %" value={subtaskWeight} onChange={(e) => setSubtaskWeight(e.target.value)} className="bg-transparent border-none w-full focus:ring-0 p-0 font-bold text-sm md:text-base"/>
+                            <div className="flex items-center gap-3 bg-slate-50 px-4 py-2 md:px-5 md:py-3 rounded-xl md:rounded-2xl text-slate-700 border-2 border-transparent focus-within:border-indigo-100 transition-all" title={`Tối đa ${Math.min(100, goal.weight || 100)} điểm`}>
+                              <Target className="text-indigo-500 w-4 h-4 md:w-[18px] md:h-[18px]" />
+                              <input type="number" placeholder={`Điểm (tối đa ${Math.min(100, goal.weight || 100)})`} value={subtaskWeight} onChange={(e) => setSubtaskWeight(e.target.value)} className="bg-transparent border-none w-full focus:ring-0 p-0 font-bold text-sm md:text-base" min="0" max={Math.min(100, goal.weight || 100)}/>
                             </div>
                           </div>
                           <div className="flex items-center gap-3 bg-slate-50 px-4 py-2.5 md:px-5 md:py-3 rounded-xl md:rounded-2xl text-slate-700 border-2 border-transparent focus-within:border-indigo-100 transition-all">
@@ -1545,7 +1608,7 @@ export default function App() {
                           <button onClick={() => addSubtask(goal.id)} className="w-full bg-slate-900 text-white py-3.5 md:py-4 rounded-xl md:rounded-2xl font-black uppercase tracking-widest text-xs md:text-sm hover:bg-indigo-600 transition-all">Xác nhận hạng mục</button>
                         </motion.div>
                       )}
-
+ 
                       <div className="space-y-3 md:space-y-4">
                         {goal.subtasks.map(sub => (
                           <div key={sub.id} className="group flex items-center gap-4 md:gap-5 bg-white p-4 md:p-5 rounded-[1.2rem] md:rounded-[1.5rem] border-2 border-indigo-50 border-l-4 border-l-indigo-400 hover:border-indigo-200 hover:border-l-indigo-600 shadow-sm hover:shadow-md transition-all">
@@ -1564,9 +1627,9 @@ export default function App() {
                                     <input type="number" value={editSubtaskWorkload} onChange={(e) => setEditSubtaskWorkload(e.target.value)} className="bg-transparent border-none w-full focus:ring-0 p-0 font-bold text-xs" placeholder="KL"/>
                                   </div>
                                   <input type="text" value={editSubtaskUnit} onChange={(e) => setEditSubtaskUnit(e.target.value)} className="bg-slate-50 border border-slate-100 rounded-xl px-3 py-1.5 font-bold text-slate-700 focus:ring-2 focus:ring-indigo-100 text-xs" placeholder="Đơn vị"/>
-                                  <div className="flex items-center gap-2 bg-slate-50 px-3 py-1.5 rounded-xl text-slate-700 border border-slate-100">
-                                    <Percent size={14} className="text-indigo-500" />
-                                    <input type="number" value={editSubtaskWeight} onChange={(e) => setEditSubtaskWeight(e.target.value)} className="bg-transparent border-none w-full focus:ring-0 p-0 font-bold text-xs" placeholder="Tỷ trọng %"/>
+                                  <div className="flex items-center gap-2 bg-slate-50 px-3 py-1.5 rounded-xl text-slate-700 border border-slate-100" title={`Tối đa ${Math.min(100, goal.weight || 100)} điểm`}>
+                                    <Target size={14} className="text-indigo-500" />
+                                    <input type="number" value={editSubtaskWeight} onChange={(e) => setEditSubtaskWeight(e.target.value)} className="bg-transparent border-none w-full focus:ring-0 p-0 font-bold text-xs" placeholder={`Điểm (tối đa ${Math.min(100, goal.weight || 100)})`}/>
                                   </div>
                                 </div>
                                 <div className="flex items-center gap-2 bg-slate-50 px-3 py-1.5 rounded-xl text-slate-700 border border-slate-100">
@@ -1584,12 +1647,12 @@ export default function App() {
                                   {sub.completed ? <CheckCircle2 className="w-5 h-5 md:w-7 md:h-7" /> : <Circle className="w-5 h-5 md:w-7 md:h-7" />}
                                 </button>
                                 <div className="flex-grow min-w-0">
-                                  <p className={`font-bold text-sm md:text-lg tracking-tight truncate-mobile ${sub.completed ? "text-slate-300 line-through" : "text-slate-700"}`}>{sub.text}</p>
-                                  {(sub.workloadValue || sub.deadline) && (
+                                  <p className={`font-bold text-sm md:text-lg tracking-tight truncate-mobile ${sub.completed ? "text-slate-300 line-through font-normal" : "text-slate-700"}`}>{sub.text}</p>
+                                  {(sub.weight > 0 || sub.workloadValue || sub.deadline) && (
                                     <div className="flex flex-wrap gap-2 md:gap-4 mt-1">
                                       {sub.weight > 0 && (
                                         <div className="flex items-center gap-1 bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full text-[8px] md:text-[10px] font-black uppercase tracking-widest whitespace-nowrap">
-                                          <Percent size={8} /> {sub.weight}%
+                                          <Target size={8} className="text-indigo-500" /> {sub.weight} đ
                                         </div>
                                       )}
                                       {sub.workloadValue && (
@@ -1802,9 +1865,9 @@ export default function App() {
         <div className="bg-white rounded-[2rem] p-6 md:p-8 border border-slate-100 shadow-xl shadow-slate-200/30 flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h2 className="text-xl md:text-2xl font-black text-slate-900 tracking-tight flex items-center gap-2">
-              <Layers className="text-indigo-600 w-5 h-5 md:w-6 md:h-6" /> Mục tiêu lớn kỳ hạn
+              <Layers className="text-indigo-600 w-5 h-5 md:w-6 md:h-6" /> Dự án kỳ hạn
             </h2>
-            <p className="text-slate-400 text-xs font-bold mt-1">Định hướng tầm nhìn lớn cho tuần, tháng và năm</p>
+            <p className="text-slate-400 text-xs font-bold mt-1">Định hướng tầm nhìn dự án cho tuần, tháng và năm</p>
           </div>
 
           {/* Period Tabs inside header card for tighter integration */}
@@ -1847,7 +1910,7 @@ export default function App() {
             <div className="space-y-6">
               <div className="flex items-center justify-between px-2">
                 <span className="text-xs font-black text-slate-400 uppercase tracking-widest">{label}</span>
-                <span className="text-xs font-black text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full">{periodGoals.length} / 3 mục tiêu</span>
+                <span className="text-xs font-black text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full">{periodGoals.length} / 3 dự án</span>
               </div>
 
               {/* Add Goal Form if < 3 */}
@@ -1859,14 +1922,13 @@ export default function App() {
                     await addMajorGoal(majorGoalsPeriod, newMajorGoalText, newMajorGoalDeadline, newMajorGoalWeight);
                     setNewMajorGoalText("");
                     setNewMajorGoalDeadline("");
-                    setNewMajorGoalWeight("33");
                   }}
                   className="bg-white rounded-3xl p-5 md:p-6 border border-slate-100 shadow-xl shadow-slate-200/20 space-y-4"
                 >
                   <div className="flex items-center gap-2">
                     <Sparkles size={16} className="text-indigo-500 animate-spin" style={{ animationDuration: '6s' }} />
                     <span className="text-[10px] font-black text-indigo-600 uppercase tracking-widest">
-                      Thêm mục tiêu lớn {majorGoalsPeriod === 'week' ? 'tuần' : majorGoalsPeriod === 'month' ? 'tháng' : 'năm'} mới ({periodGoals.length}/3)
+                      Thêm dự án {majorGoalsPeriod === 'week' ? 'tuần' : majorGoalsPeriod === 'month' ? 'tháng' : 'năm'} mới ({periodGoals.length}/3)
                     </span>
                   </div>
                   <div className="flex flex-col sm:flex-row gap-3">
@@ -1874,20 +1936,25 @@ export default function App() {
                       type="text"
                       value={newMajorGoalText}
                       onChange={(e) => setNewMajorGoalText(e.target.value)}
-                      placeholder={`Mục tiêu lớn ${majorGoalsPeriod === 'week' ? 'tuần' : majorGoalsPeriod === 'month' ? 'tháng' : 'năm'} tiếp theo...`}
+                      placeholder={`Dự án ${majorGoalsPeriod === 'week' ? 'tuần' : majorGoalsPeriod === 'month' ? 'tháng' : 'năm'} tiếp theo...`}
                       className="flex-grow bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 text-sm font-bold text-slate-900 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 transition-all outline-none"
                     />
                     <div className="flex gap-2">
-                      <div className="flex items-center gap-2 bg-slate-50 px-3 py-2 rounded-xl text-slate-500 text-xs font-bold border border-slate-100 focus-within:border-indigo-500 transition-all">
+                      <div 
+                        className="flex items-center gap-2 bg-slate-50 px-3 py-2 rounded-xl text-slate-500 text-xs font-bold border border-slate-100 focus-within:border-indigo-500 transition-all"
+                        title={`Số điểm linh hoạt từ 0 đến ${getPeriodDaysCount(majorGoalsPeriod, selectedDate) * 100} điểm`}
+                      >
                         <Target className="text-indigo-500 w-3.5 h-3.5" />
                         <input 
                           type="number" 
                           value={newMajorGoalWeight}
                           onChange={(e) => setNewMajorGoalWeight(e.target.value)}
                           placeholder="Điểm"
-                          className="bg-transparent border-none focus:ring-0 p-0 text-xs font-bold w-10 text-center outline-none"
+                          min="0"
+                          max={getPeriodDaysCount(majorGoalsPeriod, selectedDate) * 100}
+                          className="bg-transparent border-none focus:ring-0 p-0 text-xs font-bold w-12 text-center outline-none"
                         />
-                        <span className="text-slate-500 text-xs">đ</span>
+                        <span className="text-slate-400 text-xs">/{getPeriodDaysCount(majorGoalsPeriod, selectedDate) * 100} đ</span>
                       </div>
                       <button
                         type="submit"
@@ -1902,7 +1969,7 @@ export default function App() {
               ) : (
                 <div className="bg-amber-50 border border-amber-100 rounded-2xl p-4 text-center">
                   <p className="text-xs font-bold text-amber-700 flex items-center justify-center gap-1.5">
-                    <AlertCircle size={14} /> Bạn đã đặt tối đa 3 mục tiêu lớn cho {majorGoalsPeriod === 'week' ? 'tuần' : majorGoalsPeriod === 'month' ? 'tháng' : 'năm'} này.
+                    <AlertCircle size={14} /> Bạn đã đặt tối đa 3 dự án cho {majorGoalsPeriod === 'week' ? 'tuần' : majorGoalsPeriod === 'month' ? 'tháng' : 'năm'} này.
                   </p>
                 </div>
               )}
@@ -1911,12 +1978,13 @@ export default function App() {
               <div className="space-y-4">
                 {periodGoals.length === 0 ? (
                   <div className="bg-white rounded-3xl border border-dashed border-slate-200 py-12 text-center text-slate-400">
-                    <p className="text-sm font-bold">Chưa có mục tiêu nào được đặt cho kỳ này.</p>
-                    <p className="text-xs mt-1">Hãy bắt đầu đặt mục tiêu lớn để định hướng và theo dõi tiến độ!</p>
+                    <p className="text-sm font-bold">Chưa có dự án nào được khởi tạo cho kỳ này.</p>
+                    <p className="text-xs mt-1">Hãy bắt đầu thiết lập dự án mới để định hướng và theo dõi tiến độ!</p>
                   </div>
                 ) : (
                   periodGoals.map((goal) => {
                     const isExpanded = expandedGoalId === goal.id;
+                    const maxWeightVal = getPeriodDaysCount(goal.period || 'week', goal.date || selectedDate) * 100;
                     return (
                       <div 
                         key={goal.id}
@@ -1966,6 +2034,18 @@ export default function App() {
                                   className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-sm font-bold text-slate-900 focus:outline-none"
                                   autoFocus
                                 />
+                                <div className="flex items-center gap-2 bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-200 w-fit">
+                                  <Target size={12} className="text-indigo-500" />
+                                  <input 
+                                    type="number" 
+                                    value={editGoalWeight}
+                                    onChange={(e) => setEditGoalWeight(e.target.value)}
+                                    className="bg-transparent border-none focus:ring-0 p-0 text-xs font-bold w-12 text-center outline-none"
+                                    min="0"
+                                    max={maxWeightVal}
+                                  />
+                                  <span className="text-slate-400 text-xs">/{maxWeightVal} đ</span>
+                                </div>
                                 <div className="flex gap-2">
                                   <button onClick={() => saveEditGoal(goal.id)} className="bg-indigo-600 text-white px-3 py-1 rounded-lg text-[10px] font-bold cursor-pointer">Lưu</button>
                                   <button onClick={() => setEditingGoalId(null)} className="bg-slate-200 text-slate-600 px-3 py-1 rounded-lg text-[10px] font-bold cursor-pointer">Hủy</button>
@@ -2049,13 +2129,15 @@ export default function App() {
                                   />
                                   <div className="flex gap-2">
                                     <div className="flex items-center gap-1 bg-white px-2.5 py-1.5 rounded-lg border border-slate-100 text-slate-500 text-[10px] font-bold flex-1">
-                                      <Percent size={12} className="text-indigo-500" />
+                                      <Target size={12} className="text-indigo-500" />
                                       <input 
                                         type="number" 
-                                        placeholder="Tỷ trọng %" 
+                                        placeholder={`Điểm (tối đa ${Math.min(100, goal.weight || 100)})`}
                                         value={subtaskWeight} 
                                         onChange={(e) => setSubtaskWeight(e.target.value)} 
                                         className="bg-transparent border-none w-full focus:ring-0 p-0 text-[10px] font-bold outline-none font-sans"
+                                        min="0"
+                                        max={Math.min(100, goal.weight || 100)}
                                       />
                                     </div>
                                     <button 
@@ -2090,7 +2172,7 @@ export default function App() {
                                         </div>
                                         <div className="flex items-center gap-2 shrink-0">
                                           {sub.weight > 0 && (
-                                            <span className="text-[8px] bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded-full font-black uppercase tracking-wider">{sub.weight}%</span>
+                                            <span className="text-[8px] bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded-full font-black uppercase tracking-wider">{sub.weight} đ</span>
                                           )}
                                           {linkedGoal && (
                                             <span 
