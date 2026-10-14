@@ -1218,8 +1218,8 @@ export default function App() {
                     className="flex-grow bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-sm font-semibold text-slate-800 focus:outline-none focus:border-indigo-500 focus:bg-white transition-all placeholder:text-slate-400"
                   />
                   <div className="flex gap-2">
-                    <div className="flex items-center gap-1 bg-slate-50 px-3 py-2 rounded-2xl text-slate-500 text-xs font-bold border border-slate-200">
-                      <Target size={14} className="text-indigo-600" />
+                    <div className="flex items-center gap-1.5 bg-slate-50 px-3.5 py-3 sm:py-2.5 rounded-2xl text-slate-500 text-xs font-bold border border-slate-200 shrink-0">
+                      <Target size={15} className="text-indigo-600 shrink-0" />
                       <input 
                         type="number" 
                         value={newGoalWeight}
@@ -1231,10 +1231,10 @@ export default function App() {
                     </div>
                     <button
                       type="submit"
-                      className="bg-[#ff0066] hover:bg-[#e6005c] text-white px-5 py-3 rounded-2xl font-black uppercase tracking-wider text-xs flex items-center justify-center gap-2 cursor-pointer shrink-0 shadow-lg shadow-[#ff0066]/30 hover:shadow-[#ff0066]/40 active:scale-95 transition-all opacity-100"
+                      className="flex-1 sm:flex-initial bg-[#ff0066] hover:bg-[#e6005c] text-white px-6 py-3 rounded-2xl font-black uppercase tracking-wider text-xs flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-[#ff0066]/30 hover:shadow-[#ff0066]/40 active:scale-95 transition-all opacity-100"
                     >
-                      <Flame size={16} className="text-white fill-white" />
-                      <span>Thêm</span>
+                      <Flame size={16} className="text-white fill-white shrink-0" />
+                      <span>Thêm mục tiêu</span>
                     </button>
                   </div>
                 </div>
@@ -1321,7 +1321,7 @@ export default function App() {
                   <div className="flex items-center gap-2 text-amber-800">
                     <AlertCircle className="w-5 h-5 text-amber-600" />
                     <div>
-                      <h3 className="text-xs font-black uppercase tracking-wider flex items-center gap-2">
+                      <h3 className="text-xs font-black uppercase tracking-wider flex flex-wrap items-center gap-1.5 sm:gap-2">
                         Mục tiêu chưa hoàn thành từ quá khứ
                         <span className="bg-amber-200 text-amber-900 text-[10px] px-2 py-0.5 rounded-full font-bold">
                           {backlogGoals.length}
@@ -1348,40 +1348,68 @@ export default function App() {
                       {backlogGoals.map(goal => {
                         const isExpanded = expandedGoalId === goal.id;
                         return (
-                          <div key={goal.id} className="bg-white rounded-xl border border-amber-100 shadow-2xs overflow-hidden transition-all">
+                          <div key={goal.id} className="bg-white rounded-xl border border-amber-200/80 shadow-2xs overflow-hidden transition-all">
                             <div 
                               onClick={() => setExpandedGoalId(isExpanded ? null : goal.id)}
-                              className="flex items-center justify-between p-3 cursor-pointer hover:bg-amber-50/30 transition-colors"
+                              className="p-3 sm:p-3.5 cursor-pointer hover:bg-amber-50/40 transition-colors"
                             >
-                              <div className="flex items-center gap-2.5 overflow-hidden flex-grow min-w-0 pr-2">
-                                <div className="flex flex-col min-w-0">
-                                  <span className="text-sm font-semibold text-slate-800 truncate">{goal.text}</span>
-                                  <div className="flex items-center gap-2 mt-0.5">
-                                    <span className="text-[9px] bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded font-bold shrink-0">{goal.date}</span>
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="flex-grow min-w-0">
+                                  <span className="text-sm font-bold text-slate-800 break-words leading-snug block">
+                                    {goal.text}
+                                  </span>
+                                  <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                                    <span className="text-[9px] bg-amber-100 text-amber-800 border border-amber-300/60 px-1.5 py-0.5 rounded font-black shrink-0">
+                                      {goal.date}
+                                    </span>
+                                    {goal.weight && (
+                                      <span className="text-[9px] bg-slate-100 text-slate-600 border border-slate-200 px-1.5 py-0.5 rounded font-bold shrink-0">
+                                        {goal.weight}đ
+                                      </span>
+                                    )}
                                     {goal.subtasks && goal.subtasks.length > 0 && (
-                                      <span className="text-[10px] text-slate-400 font-medium">
+                                      <span className="text-[10px] text-slate-500 font-medium">
                                         {goal.subtasks.filter((s: any) => s.completed).length}/{goal.subtasks.length} hạng mục
                                       </span>
                                     )}
                                   </div>
                                 </div>
+                                
+                                <div className="flex items-center gap-2 shrink-0 pt-0.5">
+                                  {/* On desktop (sm+), show button inline */}
+                                  <button 
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      moveGoalToCurrentDate(goal.id);
+                                    }}
+                                    className="hidden sm:inline-flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-colors shadow-xs shrink-0 cursor-pointer"
+                                    title="Chuyển sang ngày đang chọn"
+                                  >
+                                    <CalendarIcon size={12} />
+                                    <span>Chuyển sang hôm nay</span>
+                                  </button>
+                                  <div className="text-slate-400 p-1 hover:text-amber-700 transition-colors">
+                                    {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                                  </div>
+                                </div>
                               </div>
-                              
-                              <div className="flex items-center gap-2 shrink-0">
+
+                              {/* On mobile screens, show button as dedicated action row below content */}
+                              <div className="flex sm:hidden items-center justify-between gap-2 pt-2.5 mt-2.5 border-t border-amber-100/80">
+                                <span className="text-[10px] text-amber-700/70 font-medium">
+                                  {isExpanded ? "Chạm để thu gọn" : "Chạm xem chi tiết"}
+                                </span>
                                 <button 
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     moveGoalToCurrentDate(goal.id);
                                   }}
-                                  className="flex items-center gap-1 bg-amber-500 text-white px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-amber-600 transition-colors shadow-xs shrink-0 cursor-pointer"
+                                  className="inline-flex items-center gap-1.5 bg-amber-500 active:bg-amber-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all shadow-xs shrink-0 cursor-pointer active:scale-95"
                                   title="Chuyển sang ngày đang chọn"
                                 >
-                                  <CalendarIcon size={11} />
+                                  <CalendarIcon size={12} />
                                   <span>Chuyển sang hôm nay</span>
                                 </button>
-                                <div className="text-slate-400 p-1">
-                                  {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                                </div>
                               </div>
                             </div>
 
@@ -1415,7 +1443,7 @@ export default function App() {
                                           >
                                             {sub.completed ? <CheckCircle2 className="w-4 h-4" /> : <Circle className="w-4 h-4" />}
                                           </button>
-                                          <span className={`font-medium ${sub.completed ? "text-slate-400 line-through" : "text-slate-700"}`}>
+                                          <span className={`font-medium break-words flex-1 min-w-0 ${sub.completed ? "text-slate-400 line-through" : "text-slate-700"}`}>
                                             {sub.text}
                                           </span>
                                         </div>
@@ -1600,9 +1628,9 @@ export default function App() {
                         </h4>
                         <button 
                           onClick={() => setAddingSubtaskTo(addingSubtaskTo === goal.id ? null : goal.id)}
-                          className="text-xs font-bold text-indigo-600 hover:text-indigo-700 flex items-center gap-1 cursor-pointer"
+                          className="text-xs font-bold text-indigo-600 hover:text-indigo-700 bg-indigo-50/80 hover:bg-indigo-100 active:bg-indigo-200 px-3 py-1.5 rounded-xl flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs"
                         >
-                          <Plus size={14} /> Thêm hạng mục
+                          <Plus size={14} strokeWidth={2.5} /> Thêm hạng mục
                         </button>
                       </div>
 
@@ -1649,9 +1677,9 @@ export default function App() {
                               <span className="text-[10px]">đ</span>
                             </div>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <div className="flex items-center gap-1 bg-slate-50 px-2.5 py-1.5 rounded-xl text-slate-500 text-xs font-semibold border border-slate-100 flex-1">
-                              <Clock size={12} className="text-indigo-500" />
+                          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                            <div className="flex items-center gap-1 bg-slate-50 px-2.5 py-2 rounded-xl text-slate-500 text-xs font-semibold border border-slate-100 flex-1">
+                              <Clock size={13} className="text-indigo-500 shrink-0" />
                               <input 
                                 type="datetime-local" 
                                 value={subtaskDeadline}
@@ -1660,10 +1688,10 @@ export default function App() {
                               />
                             </div>
                             <div className="flex gap-2">
-                              <button onClick={() => addSubtask(goal.id)} className="bg-indigo-600 text-white px-4 py-1.5 rounded-xl text-xs font-bold hover:bg-indigo-700 cursor-pointer">
-                                Thêm
+                              <button onClick={() => addSubtask(goal.id)} className="flex-1 sm:flex-initial bg-indigo-600 text-white px-5 py-2.5 rounded-xl text-xs font-bold hover:bg-indigo-700 active:scale-95 transition-all shadow-xs cursor-pointer">
+                                Thêm hạng mục
                               </button>
-                              <button onClick={() => setAddingSubtaskTo(null)} className="bg-slate-100 text-slate-600 px-3 py-1.5 rounded-xl text-xs font-semibold hover:bg-slate-200 cursor-pointer">
+                              <button onClick={() => setAddingSubtaskTo(null)} className="bg-slate-100 text-slate-600 px-4 py-2.5 rounded-xl text-xs font-semibold hover:bg-slate-200 cursor-pointer">
                                 Hủy
                               </button>
                             </div>
@@ -2005,10 +2033,10 @@ export default function App() {
                       </div>
                       <button
                         type="submit"
-                        className="bg-[#ff0066] hover:bg-[#e6005c] text-white px-4 rounded-xl font-black text-xs uppercase tracking-wider active:scale-95 transition-all shadow-md shadow-[#ff0066]/30 flex items-center gap-1.5 cursor-pointer opacity-100"
+                        className="flex-1 sm:flex-initial bg-[#ff0066] hover:bg-[#e6005c] text-white px-5 py-2.5 sm:py-2 rounded-xl font-black text-xs uppercase tracking-wider active:scale-95 transition-all shadow-md shadow-[#ff0066]/30 flex items-center justify-center gap-1.5 cursor-pointer opacity-100"
                       >
-                        <Flame size={14} className="text-white fill-white" />
-                        <span>Thêm</span>
+                        <Flame size={14} className="text-white fill-white shrink-0" />
+                        <span>Thêm dự án</span>
                       </button>
                     </div>
                   </div>
