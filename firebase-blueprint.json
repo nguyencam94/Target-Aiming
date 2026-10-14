@@ -24,6 +24,8 @@
       "properties": {
         "goalId": { "type": "string" },
         "text": { "type": "string" },
+        "startTime": { "type": "string" },
+        "endTime": { "type": "string" },
         "deadline": { "type": "string" },
         "workloadValue": { "type": "number" },
         "workloadUnit": { "type": "string" },
